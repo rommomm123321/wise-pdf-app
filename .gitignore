@@ -1,0 +1,4 @@
+﻿@node_modules
+/dist
+.env
+backend/credentials/google-drive-key.json

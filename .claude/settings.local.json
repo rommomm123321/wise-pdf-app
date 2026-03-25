@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"делай\" npx prisma migrate reset --force 2>&1)",
+      "Bash(npx prisma:*)",
+      "Bash(node -e \":*)",
+      "Bash(find /c/Users/roman/Desktop/redlines/frontend -name *useFolderContents* -o -name *useCreateFolder*)",
+      "Bash(find C:UsersromanDesktopredlinesbackendsrcroutes -type f -name *.js)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"да подвтеррждаю\" npx prisma migrate reset --force)",
+      "Bash(rm -rf prisma/migrations)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"да подвтеррждаю\" npx prisma migrate dev --name init_full --create-only)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"да подвтеррждаю\" npx prisma migrate dev --name init_full)",
+      "Bash(npx vite:*)",
+      "Bash(find C:/Users/roman/Desktop/redlines/backend -name *FolderController* -o -name *folderRouter* -type f)",
+      "Bash(find C:/Users/roman/Desktop/redlines/backend/src/controllers -name *.js -type f)",
+      "Bash(find C:/Users/roman/Desktop/redlines/frontend/src -name *ReplaceDocument* -o -name *RenameDialog* -o -name *CreateFolder* -type f)",
+      "Bash(grep -r column.*visibility C:/Users/roman/Desktop/redlines/frontend/src --include=*.tsx --include=*.ts)",
+      "Bash(grep -r \"columnVisibility\\\\|hideColumn\\\\|showColumn\\\\|preferences\\\\|projectOrder\" C:/Users/roman/Desktop/redlines/frontend/src --include=*.tsx --include=*.ts)",
+      "Bash(grep -r orderBy C:/Users/roman/Desktop/redlines/backend/src/controllers --include=*.js)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -r \"getAllUsers\\\\|GET.*users\" C:/Users/roman/Desktop/redlines/backend/src --include=*.js)"
+    ]
+  }
+}

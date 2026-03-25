@@ -1,0 +1,351 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// === РОЛЕВАЯ МОДЕЛЬ ===
+enum SystemRole {
+  GENERAL_ADMIN
+  USER          
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  UPLOAD
+  DOWNLOAD
+  MOVE
+  MARKUP_CREATE
+  MARKUP_UPDATE
+  MARKUP_DELETE
+  ROLE_CHANGE
+  ASSIGN
+  UNASSIGN
+  INVITE
+  PERMISSION_CHANGE
+}
+
+enum AccessScope {
+  FULL
+  SELECTIVE
+}
+
+// === БАЗОВЫЕ СУЩНОСТИ ===
+
+model Company {
+  id         String    @id @default(uuid())
+  name       String
+  isArchived Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  users       User[]
+  projects    Project[]
+  invitations Invitation[]
+  roles       Role[]       
+  tags        CompanyTag[]
+  markupPresets MarkupPropertyPreset[]
+}
+
+model CompanyTag {
+  id        String  @id @default(uuid())
+  text      String
+  color     String  @default("#9E9E9E")
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  users     User[]
+
+  @@unique([companyId, text])
+}
+
+model Role {
+  id          String  @id @default(uuid())
+  name        String  
+  color       String? 
+  isSystem    Boolean @default(false) 
+  
+  // Optional: null for global system roles
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Дефолтные права
+  defaultCanView     Boolean @default(true)
+  defaultCanEdit     Boolean @default(false)
+  defaultCanDelete   Boolean @default(false)
+  defaultCanDownload Boolean @default(true)
+  defaultCanMarkup   Boolean @default(false)
+  defaultCanManage   Boolean @default(false)
+
+  users       User[]
+  invitations Invitation[]
+  
+  // Null if it's a company-wide system role. Filled if it's a project-specific custom role.
+  projectId   String?
+  project     Project? @relation("ProjectRoles", fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Связи с доступами (теперь роль живет в ассайнменте)
+  projectAssignments  ProjectAssignment[]
+  folderPermissions   FolderPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([projectId])
+  @@index([isSystem])
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  googleId  String?  @unique
+  systemRole SystemRole @default(USER)
+
+  // Глобальная роль (для доступа в админку компании)
+  roleId    String?
+  role      Role?    @relation(fields: [roleId], references: [id])
+
+  tags      CompanyTag[]
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  preferences Json?    @default("{}")
+
+  isDeleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignedProjects    ProjectAssignment[]
+  folderPermissions   FolderPermission[]
+  markups             Markup[]
+  sentInvitations     Invitation[]
+  auditLogs           AuditLog[]
+  markupPresets       MarkupPropertyPreset[]
+}
+
+model ProjectAssignment {
+  id        String  @id @default(uuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Роль КОНКРЕТНО на этом проекте
+  roleId      String?
+  role        Role?    @relation(fields: [roleId], references: [id])
+
+  scope       AccessScope @default(FULL)
+
+  canView     Boolean @default(true)
+  canEdit     Boolean @default(false)
+  canDelete   Boolean @default(false)
+  canDownload Boolean @default(true)
+  canMarkup   Boolean @default(false)
+  canManage   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, projectId])
+}
+
+model FolderPermission {
+  id        String  @id @default(uuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folderId  String
+  folder    Folder  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  // Можно даже на папку назначить спец. роль
+  roleId      String?
+  role        Role?    @relation(fields: [roleId], references: [id])
+
+  scope       AccessScope @default(FULL)
+
+  canView     Boolean @default(true)
+  canEdit     Boolean @default(false)
+  canDelete   Boolean @default(false)
+  canDownload Boolean @default(true)
+  canMarkup   Boolean @default(false)
+  canManage   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, folderId])
+}
+
+model Invitation {
+  id          String           @id @default(uuid())
+  email       String
+
+  roleId      String
+  role        Role             @relation(fields: [roleId], references: [id])
+
+  companyId   String
+  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invitedById String
+  invitedBy   User             @relation(fields: [invitedById], references: [id])
+  token       String           @unique @default(uuid())
+  status      InvitationStatus @default(PENDING)
+
+  projectIds  String[]
+
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([token])
+  @@index([email])
+}
+
+model AuditLog {
+  id        String      @id @default(uuid())
+  action    AuditAction
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+
+  projectId    String?
+  folderId     String?
+  documentId   String?
+  markupId     String?
+  targetUserId String?
+
+  details   Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([folderId])
+  @@index([documentId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  isDeleted   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments ProjectAssignment[]
+  folders     Folder[]
+  roles       Role[] @relation("ProjectRoles")
+  markupFields ProjectMarkupField[]
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  parentId  String?
+  parent    Folder?  @relation("FolderToFolder", fields: [parentId], references: [id])
+  children  Folder[] @relation("FolderToFolder")
+
+  isDeleted Boolean  @default(false)
+
+  files       Document[]
+  permissions FolderPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Document {
+  id          String   @id @default(uuid())
+  name        String
+  storageUrl  String   
+  version     Int      @default(1)
+  isLatest    Boolean  @default(true)
+  scale       String?  @default("1:1")
+
+  folderId    String
+  folder      Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  isDeleted   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  markups     Markup[]
+}
+model Markup {
+  id          String   @id @default(uuid())
+  type        String   
+  pageNumber  Int      
+
+  coordinates Json
+  properties  Json?
+
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+
+  allowedEditUserIds   String[] @default([])
+  allowedDeleteUserIds String[] @default([])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MarkupPropertyPreset {
+  id          String   @id @default(uuid())
+  name        String
+  fields      Json     // [{key: "Status", type: "text|select|number", options?: ["Open","Closed"]}, ...]
+
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model ProjectMarkupField {
+  id        String   @id @default(uuid())
+  key       String
+  type      String   @default("text") // "text", "number", "select"
+  options   String[] // items for "select"
+  
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, key])
+  @@index([projectId])
+}
