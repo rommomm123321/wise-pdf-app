@@ -25,7 +25,6 @@ import {
   useMediaQuery,
 } from '@mui/material';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
-import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
@@ -39,7 +38,6 @@ import {
 } from '../hooks/useUsers';
 import { useCompanyTags, useCustomRoles } from '../hooks/useCustomRoles';
 import InviteDialog from '../components/users/InviteDialog';
-import AddUserDialog from '../components/users/AddUserDialog';
 import UserDetailDialog from '../components/users/UserDetailDialog';
 import CustomRoleDialog from '../components/users/CustomRoleDialog';
 import BulkActionsToolbar from '../components/layout/BulkActionsToolbar';
@@ -110,7 +108,6 @@ export default function UsersPage() {
   const bulkDelete = useBulkDeleteUsers();
 
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [addUserOpen, setAddUserOpen] = useState(false);
   const [customRolesOpen, setCustomRolesOpen] = useState(false);
   const [detailUserId, setDetailUserId] = useState<string | null>(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -238,15 +235,6 @@ export default function UsersPage() {
                 sx={{ flexGrow: isExtraSmall ? 1 : 0 }}
               >
                 {t('customRoles')}
-              </Button>
-              <Button 
-                variant="outlined" 
-                startIcon={<PersonSearchIcon />} 
-                onClick={() => setAddUserOpen(true)}
-                size={isExtraSmall ? 'small' : 'medium'}
-                sx={{ flexGrow: isExtraSmall ? 1 : 0 }}
-              >
-                {t('addExistingUser')}
               </Button>
               <Button 
                 variant="contained" 
@@ -460,7 +448,6 @@ export default function UsersPage() {
       />
 
       <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} />
-      <AddUserDialog open={addUserOpen} onClose={() => setAddUserOpen(false)} />
       {detailUserId && <UserDetailDialog userId={detailUserId} open={!!detailUserId} onClose={() => setDetailUserId(null)} />}
       <CustomRoleDialog open={customRolesOpen} onClose={() => setCustomRolesOpen(false)} />
       <ConfirmDialog open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} title={t('confirmDelete')} message={t('bulkDeleteConfirm')} onConfirm={handleBulkDelete} />

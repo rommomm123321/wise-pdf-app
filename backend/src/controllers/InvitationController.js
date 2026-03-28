@@ -1,5 +1,6 @@
 const prisma = require('../prismaClient');
 const { logAction } = require('../services/auditService');
+const { sendInvitationEmail, sendWelcomeEmail } = require('../services/emailService');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 
@@ -10,7 +11,7 @@ class InvitationController {
   // POST /api/invitations — создать приглашение
   static async createInvitation(req, res) {
     try {
-      const { email, roleId, projectIds = [] } = req.body;
+      const { email, roleId, projectIds = [], companyId: bodyCompanyId } = req.body;
       if (!email) return res.status(400).json({ error: 'Email is required' });
       if (!roleId) return res.status(400).json({ error: 'Role is required' });
 
@@ -26,21 +27,24 @@ class InvitationController {
         return res.status(403).json({ error: 'Only admins can send invitations' });
       }
 
-      if (!currentUser.companyId) {
-        return res.status(400).json({ error: 'You must belong to a company to send invitations' });
+      // GENERAL_ADMIN can pass companyId in body; regular admins use their own companyId
+      const targetCompanyId = isGeneralAdmin ? bodyCompanyId : currentUser.companyId;
+
+      if (!targetCompanyId) {
+        return res.status(400).json({ error: isGeneralAdmin ? 'Company is required' : 'You must belong to a company to send invitations' });
       }
 
-      // Проверяем что юзер ещё не в этой компании
-      const existingUser = await prisma.user.findUnique({ where: { email } });
-      if (existingUser && existingUser.companyId === currentUser.companyId) {
-        return res.status(400).json({ error: 'User already belongs to your company' });
+      // Проверяем что юзер ещё не в этой компании (исключаем мягко удалённых)
+      const existingUser = await prisma.user.findFirst({ where: { email, isDeleted: false } });
+      if (existingUser && existingUser.companyId === targetCompanyId) {
+        return res.status(400).json({ error: 'User already belongs to this company' });
       }
 
       const invitation = await prisma.invitation.create({
         data: {
           email,
           roleId,
-          companyId: currentUser.companyId,
+          companyId: targetCompanyId,
           invitedById: currentUser.id,
           projectIds,
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -48,6 +52,18 @@ class InvitationController {
       });
 
       const inviteUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/invite/${invitation.token}`;
+
+      // Send invitation email (fire-and-forget — don't block response)
+      const company = await prisma.company.findUnique({ where: { id: targetCompanyId }, select: { name: true } });
+      const role = await prisma.role.findUnique({ where: { id: roleId }, select: { name: true } });
+      sendInvitationEmail({
+        to: email,
+        inviteUrl,
+        companyName: company?.name || 'Your Company',
+        roleName: role?.name,
+        inviterName: currentUser.name || currentUser.email,
+        expiresAt: invitation.expiresAt,
+      }).catch(err => console.error('[Email] Failed to send invitation:', err));
 
       await logAction({
         action: 'INVITE',
@@ -212,6 +228,7 @@ class InvitationController {
             name: name || user.name,
             roleId: invitation.roleId,
             companyId: invitation.companyId,
+            isDeleted: false,
           },
           select: userSelect,
         });
@@ -247,6 +264,14 @@ class InvitationController {
         where: { id: invitation.id },
         data: { status: 'ACCEPTED' },
       });
+
+      // Send welcome email (fire-and-forget)
+      const welcomeCompany = await prisma.company.findUnique({ where: { id: invitation.companyId }, select: { name: true } });
+      sendWelcomeEmail({
+        to: user.email,
+        userName: user.name,
+        companyName: welcomeCompany?.name || 'Your Company',
+      }).catch(err => console.error('[Email] Failed to send welcome email:', err));
 
       const jwtToken = jwt.sign(
         { userId: user.id, email: user.email, role: user.systemRole },

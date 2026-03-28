@@ -112,13 +112,12 @@ export default function AddUserDialog({ open, onClose }: AddUserDialogProps) {
           )}
 
           {results.length > 0 && (
-            <List dense sx={{ maxHeight: 300, overflow: 'auto' }}>
+            <List sx={{ maxHeight: 300, overflow: 'auto' }}>
               {results.map((user: any) => (
                 <ListItemButton
                   key={user.id}
                   onClick={() => handleAdd(user.id)}
                   disabled={addToCompany.isPending}
-                  sx={{ borderRadius: 1, mb: 0.5 }}
                 >
                   <ListItemAvatar>
                     <Avatar sx={{ width: 32, height: 32, fontSize: '0.8rem', bgcolor: user.role?.color || 'secondary.main' }}>

@@ -96,6 +96,68 @@ class DocumentController {
     }
   }
 
+  // Copy markups from ALL previous versions to this document.
+  // Finds siblings by name+folderId, deduplicates by type+page+coordinates.
+  static async copyMarkupsFromDocument(req, res) {
+    try {
+      const { documentId } = req.params;
+
+      const targetDoc = await prisma.document.findUnique({ where: { id: documentId } });
+      if (!targetDoc) return res.status(404).json({ error: 'Target document not found' });
+
+      // All other versions of the same document (same name + folder)
+      const siblingDocs = await prisma.document.findMany({
+        where: {
+          name: targetDoc.name,
+          folderId: targetDoc.folderId,
+          isDeleted: false,
+          id: { not: documentId },
+        },
+        orderBy: { version: 'asc' },
+      });
+
+      if (siblingDocs.length === 0) return res.json({ status: 'ok', count: 0 });
+
+      const allMarkups = await prisma.markup.findMany({
+        where: { documentId: { in: siblingDocs.map(d => d.id) } },
+      });
+
+      // Deduplicate: same type + page + coordinates (catches markups already transferred in prior upgrades)
+      const seen = new Set();
+      const unique = allMarkups.filter(m => {
+        const key = `${m.type}|${m.pageNumber}|${JSON.stringify(m.coordinates)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      const created = await Promise.all(unique.map(m =>
+        prisma.markup.create({
+          data: {
+            documentId,
+            authorId: m.authorId,
+            type: m.type,
+            pageNumber: m.pageNumber,
+            coordinates: m.coordinates,
+            properties: m.properties,
+            allowedEditUserIds: m.allowedEditUserIds,
+          },
+        })
+      ));
+
+      await logAction({
+        action: 'UPDATE',
+        userId: req.user.userId,
+        documentId,
+        details: { action: 'copy_markups_all_versions', count: created.length },
+      });
+
+      res.json({ status: 'ok', count: created.length });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   // --- BULK OPERATIONS ---
 
   static async bulkDelete(req, res) {

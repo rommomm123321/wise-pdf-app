@@ -5,10 +5,13 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import UpgradeIcon from '@mui/icons-material/Upgrade';
+import LayersIcon from '@mui/icons-material/Layers';
+import Divider from '@mui/material/Divider';
 import ShareIcon from '@mui/icons-material/Share';
 import HistoryIcon from '@mui/icons-material/History';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 
 interface DocumentRowProps {
@@ -17,6 +20,7 @@ interface DocumentRowProps {
   onDelete?: (id: string) => void;
   onReplace?: (id: string) => void;
   onShare?: (id: string, name: string) => void;
+  onExportWithMarkups?: (id: string, name: string) => void;
   canDownload?: boolean;
   canDelete?: boolean;
   canEdit?: boolean;
@@ -33,12 +37,13 @@ interface DocumentRowProps {
 
 const DocumentRow = forwardRef<HTMLTableRowElement, DocumentRowProps>(({
   document: docItem, projectId, canDownload, canDelete, canEdit, canManage,
-  onDelete, onReplace, onShare,
+  onDelete, onReplace, onShare, onExportWithMarkups,
   isSelected = false, onSelect, selectionMode = false,
   isDragging = false, dragProps, dragHandleProps, showCol, onShowVersions
 }, ref) => {
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const { token } = useAuth();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
   const handleMenuOpen = (e: React.MouseEvent<HTMLElement>) => {
@@ -67,13 +72,14 @@ const DocumentRow = forwardRef<HTMLTableRowElement, DocumentRowProps>(({
     e.stopPropagation();
     handleMenuClose();
     if (!canDownload) return;
-    const link = window.document.createElement('a');
-    link.href = docItem.storageUrl;
-    link.setAttribute('download', docItem.name);
-    link.target = '_blank';
-    document.body.appendChild(link);
-    link.click();
-    link.parentNode?.removeChild(link);
+    fetch(`/api/documents/${docItem.id}/proxy`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = window.document.createElement('a');
+        a.href = url; a.download = docItem.name; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      });
   };
 
   return (
@@ -144,9 +150,16 @@ const DocumentRow = forwardRef<HTMLTableRowElement, DocumentRowProps>(({
         {canDownload && (
           <MenuItem onClick={handleDownload}>
             <DownloadIcon fontSize="small" sx={{ mr: 1 }} />
-            {t('download')}
+            {t('downloadClean', 'Download (clean PDF)')}
           </MenuItem>
         )}
+        {canDownload && onExportWithMarkups && (
+          <MenuItem onClick={() => { handleMenuClose(); onExportWithMarkups(docItem.id, docItem.name); }}>
+            <LayersIcon fontSize="small" sx={{ mr: 1 }} />
+            {t('downloadWithMarkups', 'Download with markups')}
+          </MenuItem>
+        )}
+        {canDownload && <Divider />}
         {canEdit && onReplace && (
           <MenuItem onClick={() => { handleMenuClose(); onReplace(docItem.id); }}>
             <UpgradeIcon fontSize="small" sx={{ mr: 1 }} />

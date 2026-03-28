@@ -22,7 +22,14 @@
       "Bash(grep -r \"columnVisibility\\\\|hideColumn\\\\|showColumn\\\\|preferences\\\\|projectOrder\" C:/Users/roman/Desktop/redlines/frontend/src --include=*.tsx --include=*.ts)",
       "Bash(grep -r orderBy C:/Users/roman/Desktop/redlines/backend/src/controllers --include=*.js)",
       "Bash(xargs grep:*)",
-      "Bash(grep -r \"getAllUsers\\\\|GET.*users\" C:/Users/roman/Desktop/redlines/backend/src --include=*.js)"
+      "Bash(grep -r \"getAllUsers\\\\|GET.*users\" C:/Users/roman/Desktop/redlines/backend/src --include=*.js)",
+      "Bash(node:*)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(grep -n \"proxy\\\\|range\\\\|Range\\\\|arrayBuffer\\\\|stream\\\\|pipe\" C:UsersromanDesktopredlinesbackendsrcroutes/*.js)",
+      "Bash(grep -v \"comment\\\\|//\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''dependencies'''',{}\\), indent=2\\)\\)\")",
+      "Bash(npm install:*)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''dependencies'''',{}\\), indent=2\\)\\)\")"
     ]
   }
 }

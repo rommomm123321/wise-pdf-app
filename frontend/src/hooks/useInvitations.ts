@@ -12,7 +12,7 @@ export function useInvitations() {
 export function useCreateInvitation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { email: string; roleId: string; projectIds: string[] }) =>
+    mutationFn: (data: { email: string; roleId: string; projectIds: string[]; companyId?: string }) =>
       apiFetch<{ status: string; data: any }>('/api/invitations', {
         method: 'POST',
         body: JSON.stringify(data),

@@ -20,6 +20,8 @@ export function useUsers(page = 1, limit = 20) {
     queryKey: ['users', page, limit],
     queryFn: () => apiFetch<UsersResponse>(`/api/users?page=${page}&limit=${limit}`),
     select: (res) => ({ users: res.data, pagination: res.pagination }),
+    staleTime: 0,          // always re-fetch on mount
+    refetchOnMount: true,
   });
 }
 

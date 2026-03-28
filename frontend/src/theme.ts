@@ -132,12 +132,38 @@ export function getTheme(mode: 'dark' | 'light'): Theme {
           },
         },
       },
+      MuiListItem: {
+        styleOverrides: {
+          root: {
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingLeft: 16,
+            paddingRight: 16,
+            '&.MuiListItem-dense': {
+              paddingTop: 4,
+              paddingBottom: 4,
+            },
+            '&.MuiListItem-gutters': {
+              paddingLeft: 16,
+              paddingRight: 16,
+            },
+          },
+        },
+      },
       MuiListItemButton: {
         styleOverrides: {
           root: {
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingLeft: 16,
+            paddingRight: 16,
             borderRadius: 8,
             marginBottom: 2,
             transition: 'all 0.15s ease',
+            '&.Mui-dense': {
+              paddingTop: 4,
+              paddingBottom: 4,
+            },
             ...(isDark
               ? {
                   '&:hover': {
@@ -166,6 +192,39 @@ export function getTheme(mode: 'dark' | 'light'): Theme {
                     },
                   },
                 }),
+          },
+        },
+      },
+      MuiMenuItem: {
+        styleOverrides: {
+          root: {
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingLeft: 16,
+            paddingRight: 16,
+            borderRadius: 6,
+            margin: '0 4px',
+            '&.Mui-selected': {
+              backgroundColor: isDark ? 'rgba(243,194,75,0.12)' : 'rgba(229,168,22,0.10)',
+              color: isDark ? GOLD_DARK : '#1A1A2E',
+              fontWeight: 600,
+            },
+          },
+        },
+      },
+      MuiTableCell: {
+        styleOverrides: {
+          root: {
+            paddingTop: 4,
+            paddingBottom: 4,
+            paddingLeft: 16,
+            paddingRight: 16,
+            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+            '&.MuiTableCell-head': {
+              paddingTop: 8,
+              paddingBottom: 8,
+              backgroundColor: isDark ? '#1F1F1F' : '#F9FAFB',
+            },
           },
         },
       },

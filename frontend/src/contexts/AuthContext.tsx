@@ -89,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setToken(null);
     setIsImpersonating(false);
+    window.location.href = '/login';
   }, []);
 
   const impersonate = useCallback(async (userId: string) => {

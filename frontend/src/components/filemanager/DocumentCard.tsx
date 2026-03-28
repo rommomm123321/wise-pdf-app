@@ -16,11 +16,14 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import UpgradeIcon from '@mui/icons-material/Upgrade';
+import LayersIcon from '@mui/icons-material/Layers';
+import Divider from '@mui/material/Divider';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ShareIcon from '@mui/icons-material/Share';
 import HistoryIcon from '@mui/icons-material/History';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface DocumentCardProps {
   document: {
@@ -34,6 +37,7 @@ interface DocumentCardProps {
   onDelete?: (id: string) => void;
   onReplace?: (id: string) => void;
   onShare?: (id: string, name: string) => void;
+  onExportWithMarkups?: (id: string, name: string) => void;
   canDownload?: boolean;
   canDelete?: boolean;
   canEdit?: boolean;
@@ -51,6 +55,7 @@ export default function DocumentCard({
   onDelete,
   onReplace,
   onShare,
+  onExportWithMarkups,
   canDownload = true,
   canDelete = false,
   canEdit = false,
@@ -62,6 +67,7 @@ export default function DocumentCard({
 }: DocumentCardProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { token } = useAuth();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
   const date = new Date(document.createdAt).toLocaleDateString();
@@ -148,17 +154,28 @@ export default function DocumentCard({
           {t('versions', 'Versions History')}
         </MenuItem>
         {canDownload && (
-          <MenuItem
-            component="a"
-            href={document.storageUrl}
-            target="_blank"
-            rel="noopener"
-            onClick={() => setAnchorEl(null)}
-          >
+          <MenuItem onClick={() => {
+            setAnchorEl(null);
+            fetch(`/api/documents/${document.id}/proxy`, { headers: { Authorization: `Bearer ${token}` } })
+              .then(r => r.blob())
+              .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = window.document.createElement('a');
+                a.href = url; a.download = document.name; a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+              });
+          }}>
             <DownloadIcon fontSize="small" sx={{ mr: 1 }} />
-            {t('download')}
+            {t('downloadClean', 'Download (clean PDF)')}
           </MenuItem>
         )}
+        {canDownload && onExportWithMarkups && (
+          <MenuItem onClick={() => { setAnchorEl(null); onExportWithMarkups(document.id, document.name); }}>
+            <LayersIcon fontSize="small" sx={{ mr: 1 }} />
+            {t('downloadWithMarkups', 'Download with markups')}
+          </MenuItem>
+        )}
+        {canDownload && <Divider />}
         {canEdit && onReplace && (
           <MenuItem onClick={() => { setAnchorEl(null); onReplace(document.id); }}>
             <UpgradeIcon fontSize="small" sx={{ mr: 1 }} />

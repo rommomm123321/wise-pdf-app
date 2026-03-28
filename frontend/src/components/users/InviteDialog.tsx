@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -31,34 +31,65 @@ import { useTranslation } from 'react-i18next';
 import { useProjects } from '../../hooks/useProjects';
 import { useInvitations, useCreateInvitation, useCancelInvitation } from '../../hooks/useInvitations';
 import { useUsers } from '../../hooks/useUsers';
+import { useCustomRoles } from '../../hooks/useCustomRoles';
+import { useAuth } from '../../contexts/AuthContext';
+import { useAllCompanies } from '../../hooks/useCompany';
 
 interface InviteDialogProps {
   open: boolean;
   onClose: () => void;
 }
 
-const INVITE_ROLES = ['TEAM_LEAD', 'WORKER', 'CLIENT'] as const;
-
 export default function InviteDialog({ open, onClose }: InviteDialogProps) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const isGeneralAdmin = user?.systemRole === 'GENERAL_ADMIN';
   const isMobile = useMediaQuery('(max-width:600px)');
-  const projectsQuery = useProjects(1, 200);
-  const projectsList = projectsQuery.data?.projects || [];
+
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
+  const handleCompanyChange = (companyId: string) => {
+    setSelectedCompanyId(companyId);
+    setSelectedProjects([]);
+  };
+  const { data: allCompanies = [] } = useAllCompanies();
+
+  // For GENERAL_ADMIN: load projects only after company is selected
+  // For regular admins: load all accessible projects (their company)
+  const projectsQuery = useProjects(1, 200, isGeneralAdmin ? selectedCompanyId : undefined);
+  const projectsList = (isGeneralAdmin && !selectedCompanyId) ? [] : (projectsQuery.data?.projects || []);
   
-  const { data: invitations = [] } = useInvitations();
+  const { data: invitations = [], refetch: refetchInvitations } = useInvitations();
   const usersQuery = useUsers(1, 1000);
   const allUsers = usersQuery.data?.users || [];
+  const { data: customRoles = [] } = useCustomRoles();
   const createInvitation = useCreateInvitation();
   const cancelInvitation = useCancelInvitation();
 
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<string>('WORKER');
+  const [role, setRole] = useState<string>('');
+
+  // Auto-select first role when roles load
+  const firstRoleId = customRoles[0]?.id || 'MEMBER';
+  const effectiveRole = role || firstRoleId;
   const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(dayjs().add(7, 'day'));
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<'create' | 'pending'>('create');
   const [error, setError] = useState<string | null>(null);
+
+  // Reset form state and refetch fresh data every time the dialog opens
+  useEffect(() => {
+    if (!open) return;
+    setEmail('');
+    setRole('');
+    setSelectedProjects([]);
+    setSelectedCompanyId('');
+    setInviteLink(null);
+    setCopied(false);
+    setError(null);
+    refetchInvitations();
+  }, [open]);
 
   const validateEmail = (e: string) => {
     return String(e).toLowerCase().match(/^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/);
@@ -70,12 +101,17 @@ export default function InviteDialog({ open, onClose }: InviteDialogProps) {
       setError(t('errorInvalidEmail'));
       return;
     }
+    if (isGeneralAdmin && !selectedCompanyId) {
+      setError(t('errorSelectCompany', 'Please select a company first'));
+      return;
+    }
 
     try {
       const result = await createInvitation.mutateAsync({
         email: email.trim(),
-        roleId: role,
+        roleId: effectiveRole,
         projectIds: selectedProjects,
+        ...(isGeneralAdmin ? { companyId: selectedCompanyId } : {}),
       });
       
       if (result.data?.token) {
@@ -151,14 +187,28 @@ export default function InviteDialog({ open, onClose }: InviteDialogProps) {
               )}
             />
 
+            {isGeneralAdmin && (
+              <FormControl size="small" fullWidth required>
+                <InputLabel>{t('company', 'Company')}</InputLabel>
+                <Select value={selectedCompanyId} label={t('company', 'Company')} onChange={(e) => handleCompanyChange(e.target.value)}>
+                  {(allCompanies as any[]).map((c: any) => (
+                    <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+
             <FormControl size="small" fullWidth>
               <InputLabel>{t('inviteRole')}</InputLabel>
-              <Select value={role} label={t('inviteRole')} onChange={(e) => setRole(e.target.value)}>
-                {INVITE_ROLES.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
+              <Select value={effectiveRole} label={t('inviteRole')} onChange={(e) => setRole(e.target.value)}>
+                {customRoles.length > 0
+                  ? customRoles.map((r: any) => <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>)
+                  : ['ADMIN', 'MEMBER', 'VIEWER'].map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)
+                }
               </Select>
             </FormControl>
 
-            <FormControl size="small" fullWidth>
+            <FormControl size="small" fullWidth disabled={isGeneralAdmin && !selectedCompanyId}>
               <InputLabel>{t('inviteProjects')}</InputLabel>
               <Select multiple value={selectedProjects} label={t('inviteProjects')} onChange={(e) => setSelectedProjects(e.target.value as string[])} renderValue={(selected) => (
                 <Box display="flex" gap={0.5} flexWrap="wrap">
@@ -196,12 +246,12 @@ export default function InviteDialog({ open, onClose }: InviteDialogProps) {
             {pendingInvitations.length === 0 ? (
               <Typography variant="body2" color="text.secondary" textAlign="center" py={4}>{t('noPendingInvitations')}</Typography>
             ) : (
-              <List dense>
+              <List>
                 {pendingInvitations.map((inv: any) => {
                   const link = `${window.location.origin}/invite/${inv.token}`;
                   return (
-                    <ListItem key={inv.id} divider sx={{ px: 0 }}>
-                      <ListItemText primary={inv.email} secondary={`${inv.role} • Exp: ${new Date(inv.expiresAt).toLocaleDateString()}`} />
+                    <ListItem key={inv.id} divider>
+                      <ListItemText primary={inv.email} secondary={`${(customRoles as any[]).find((r) => r.id === (inv.roleId || (typeof inv.role === 'string' ? inv.role : inv.role?.id)))?.name || inv.role?.name || (typeof inv.role === 'string' ? inv.role : null) || inv.roleId || '—'} • Exp: ${new Date(inv.expiresAt).toLocaleDateString()}`} />
                       <ListItemSecondaryAction>
                         <IconButton size="small" onClick={() => handleCopy(link)} color="primary"><ContentCopyIcon fontSize="small" /></IconButton>
                         <IconButton size="small" color="error" onClick={() => cancelInvitation.mutate(inv.id)}><CancelIcon fontSize="small" /></IconButton>

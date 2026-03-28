@@ -1,4 +1,5 @@
 # Rules
+
 ## Structure
 
 Rules are organized into a **common** layer plus **language-specific** directories:
@@ -67,7 +68,7 @@ cp -r rules/php ~/.claude/rules/php
 - **Rules** define standards, conventions, and checklists that apply broadly (e.g., "80% test coverage", "no hardcoded secrets").
 - **Skills** (`skills/` directory) provide deep, actionable reference material for specific tasks (e.g., `python-patterns`, `golang-testing`).
 
-Language-specific rule files reference relevant skills where appropriate. Rules tell you *what* to do; skills tell you *how* to do it.
+Language-specific rule files reference relevant skills where appropriate. Rules tell you _what_ to do; skills tell you _how_ to do it.
 
 ## Adding a New Language
 

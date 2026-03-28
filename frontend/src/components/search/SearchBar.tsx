@@ -159,9 +159,9 @@ export default function SearchBar() {
                 <Typography variant="caption" color="text.secondary" sx={{ px: 1, fontWeight: 600 }}>
                   {t('users', 'Users')}
                 </Typography>
-                <List dense disablePadding sx={{ mb: 1 }}>
+                <List sx={{ mb: 1 }}>
                   {users.map((u: any) => (
-                    <ListItemButton key={u.id} onClick={() => handleSelect('user', u.id)} sx={{ borderRadius: 1 }}>
+                    <ListItemButton key={u.id} onClick={() => handleSelect('user', u.id)}>
                       <ListItemIcon sx={{ minWidth: 40 }}>
                         <Avatar sx={{ 
                           width: 28, height: 28, fontSize: '0.7rem', 
@@ -207,9 +207,9 @@ export default function SearchBar() {
                 <Typography variant="caption" color="text.secondary" sx={{ px: 1, fontWeight: 600 }}>
                   {t('projects')}
                 </Typography>
-                <List dense disablePadding sx={{ mb: 1 }}>
+                <List sx={{ mb: 1 }}>
                   {projects.map((p: any) => (
-                    <ListItemButton key={p.id} onClick={() => handleSelect('project', p.id)} sx={{ borderRadius: 1 }}>
+                    <ListItemButton key={p.id} onClick={() => handleSelect('project', p.id)}>
                       <ListItemIcon sx={{ minWidth: 32 }}><WorkIcon fontSize="small" /></ListItemIcon>
                       <ListItemText primary={p.name} primaryTypographyProps={{ fontSize: '0.875rem' }} />
                     </ListItemButton>
@@ -224,12 +224,11 @@ export default function SearchBar() {
                 <Typography variant="caption" color="text.secondary" sx={{ px: 1, fontWeight: 600 }}>
                   {t('folders')}
                 </Typography>
-                <List dense disablePadding sx={{ mb: 1 }}>
+                <List sx={{ mb: 1 }}>
                   {folders.map((f: any) => (
                     <ListItemButton
                       key={f.id}
                       onClick={() => handleSelect('folder', f.id, f.projectId)}
-                      sx={{ borderRadius: 1 }}
                     >
                       <ListItemIcon sx={{ minWidth: 32 }}><FolderIcon fontSize="small" /></ListItemIcon>
                       <ListItemText primary={f.name} primaryTypographyProps={{ fontSize: '0.875rem' }} />
@@ -245,12 +244,11 @@ export default function SearchBar() {
                 <Typography variant="caption" color="text.secondary" sx={{ px: 1, fontWeight: 600 }}>
                   {t('documents')}
                 </Typography>
-                <List dense disablePadding>
+                <List>
                   {documents.map((d: any) => (
                     <ListItemButton
                       key={d.id}
                       onClick={() => handleSelect('document', d.id, d.projectId)}
-                      sx={{ borderRadius: 1 }}
                     >
                       <ListItemIcon sx={{ minWidth: 32 }}><DescriptionIcon fontSize="small" /></ListItemIcon>
                       <ListItemText primary={d.name} primaryTypographyProps={{ fontSize: '0.875rem' }} />

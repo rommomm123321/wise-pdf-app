@@ -12,6 +12,19 @@ import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import LockIcon from '@mui/icons-material/Lock';
 import DeleteIcon from '@mui/icons-material/Delete';
 
+export const STATUS_COLORS: Record<string, string> = {
+  open: '#1976d2',
+  'in-progress': '#ed6c02',
+  resolved: '#2e7d32',
+  closed: '#78909c',
+};
+export const STATUS_LABELS: Record<string, string> = {
+  open: 'Open',
+  'in-progress': 'In Progress',
+  resolved: 'Resolved',
+  closed: 'Closed',
+};
+
 const typeIcons: Record<string, React.ReactNode> = {
   rect: <RectangleIcon fontSize="small" />,
   line: <TimelineIcon fontSize="small" />,
@@ -33,10 +46,13 @@ interface MarkupListItemProps {
   markup: any;
   selected: boolean;
   onSelect: (id: string) => void;
+  onOpen?: (id: string) => void;
   onDelete?: () => void;
+  canDelete?: boolean;
+  batchMode?: boolean;
 }
 
-const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect, onDelete }: MarkupListItemProps) {
+const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect, onOpen, onDelete, canDelete = true, batchMode = false }: MarkupListItemProps) {
   const theme = useTheme();
   const gold = theme.palette.primary.main;
   const ref = useRef<HTMLDivElement>(null);
@@ -55,12 +71,13 @@ const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect
       <Box
         ref={ref}
         onClick={() => onSelect(markup.id)}
+        onDoubleClick={() => onOpen?.(markup.id)}
         sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          px: 1.5,
-          py: 0.6,
+          px: 2,
+          py: 1,
           cursor: 'pointer',
           borderBottom: '1px solid',
           borderColor: 'divider',
@@ -72,9 +89,15 @@ const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect
           },
         }}
       >
-        <Box sx={{ color, display: 'flex', alignItems: 'center', flexShrink: 0, fontSize: 16 }}>
-          {typeIcons[markup.type] || <RectangleIcon fontSize="small" />}
-        </Box>
+        {batchMode ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, border: '2px solid', borderRadius: '3px', borderColor: selected ? gold : 'divider', bgcolor: selected ? gold : 'transparent', transition: 'all 0.1s' }}>
+            {selected && <Box sx={{ width: 10, height: 10, bgcolor: 'background.paper', borderRadius: '1px', transform: 'rotate(45deg) scaleX(0.6) translateY(-1px)', borderBottom: '2px solid', borderRight: '2px solid', borderColor: 'background.paper' }} />}
+          </Box>
+        ) : (
+          <Box sx={{ color, display: 'flex', alignItems: 'center', flexShrink: 0, fontSize: 16 }}>
+            {typeIcons[markup.type] || <RectangleIcon fontSize="small" />}
+          </Box>
+        )}
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Typography fontWeight={600} noWrap sx={{ fontSize: '0.73rem', lineHeight: 1.3, color: selected ? gold : 'text.primary' }}>
             {markup.properties?.subject || typeLabels[markup.type] || markup.type}
@@ -85,8 +108,21 @@ const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          {markup.properties?.source === 'bluebeam_import' && (
+            <Box component="span" sx={{
+              fontSize: '0.58rem', fontWeight: 800, color: 'warning.main',
+              border: '1px solid', borderColor: 'warning.main', borderRadius: 0.5,
+              px: 0.3, lineHeight: 1.4, flexShrink: 0, opacity: 0.8,
+            }}>BB</Box>
+          )}
+          {markup.properties?.status && (
+            <Box sx={{
+              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              bgcolor: STATUS_COLORS[markup.properties.status] || STATUS_COLORS.open,
+            }} />
+          )}
           {locked && <LockIcon sx={{ fontSize: 12, opacity: 0.35 }} />}
-          {!locked && onDelete && (
+          {!locked && onDelete && canDelete && (
             <IconButton 
               className="delete-btn"
               size="small" 

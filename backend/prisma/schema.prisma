@@ -140,6 +140,8 @@ model User {
   sentInvitations     Invitation[]
   auditLogs           AuditLog[]
   markupPresets       MarkupPropertyPreset[]
+  notificationsReceived Notification[] @relation("NotificationsReceived")
+  notificationsSent     Notification[] @relation("NotificationsSent")
 }
 
 model ProjectAssignment {
@@ -332,6 +334,23 @@ model MarkupPropertyPreset {
 
   @@unique([companyId, name])
   @@index([companyId])
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation("NotificationsReceived", fields: [userId], references: [id], onDelete: Cascade)
+  actorId    String
+  actor      User     @relation("NotificationsSent", fields: [actorId], references: [id], onDelete: Cascade)
+  markupId   String
+  documentId String
+  projectId  String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, markupId])
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model ProjectMarkupField {

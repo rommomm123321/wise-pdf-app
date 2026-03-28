@@ -15,7 +15,7 @@ interface ProjectsResponse {
 }
 
 export function useProjects(page = 1, limit = 20, companyId?: string) {
-  const url = `/api/projects?page=${page}&limit=${limit}${companyId && companyId !== 'ALL' ? `&companyId=${companyId}` : ''}`;
+  const url = `/api/projects?page=${page}&limit=${limit}${companyId && companyId !== 'ALL' && companyId !== '' ? `&companyId=${companyId}` : ''}`;
   return useQuery({
     queryKey: ['projects', page, limit, companyId],
     queryFn: () => apiFetch<ProjectsResponse>(url),

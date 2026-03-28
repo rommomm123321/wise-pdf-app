@@ -75,19 +75,35 @@ class FolderController {
       if (!isGhost) {
         documents = await prisma.document.findMany({
           where: { folderId, isLatest: true, isDeleted: false },
+          include: { _count: { select: { markups: true } } },
           orderBy: { name: 'asc' }
         });
       }
 
       // 3. Combined pagination logic
       const totalItems = visibleSubFolders.length + documents.length;
-      
-      // In a real desktop-like app, we often paginate only files if there are many, 
-      // but here we'll just slice the arrays for simplicity of the combined view
+
       const paginatedFolders = visibleSubFolders.slice(skip, skip + limit);
       const remainingLimit = Math.max(0, limit - paginatedFolders.length);
       const docSkip = Math.max(0, skip - visibleSubFolders.length);
-      const paginatedDocs = documents.slice(docSkip, docSkip + remainingLimit);
+      let paginatedDocs = documents.slice(docSkip, docSkip + remainingLimit);
+
+      // 4. Enrich docs with total markup count across ALL versions (for replace dialog)
+      if (paginatedDocs.length > 0) {
+        const docNames = paginatedDocs.map(d => d.name);
+        const allVersionDocs = await prisma.document.findMany({
+          where: { folderId, isDeleted: false, name: { in: docNames } },
+          include: { _count: { select: { markups: true } } },
+        });
+        const markupsByName = {};
+        for (const d of allVersionDocs) {
+          markupsByName[d.name] = (markupsByName[d.name] || 0) + d._count.markups;
+        }
+        paginatedDocs = paginatedDocs.map(d => ({
+          ...d,
+          allVersionMarkupsCount: markupsByName[d.name] || 0,
+        }));
+      }
 
       res.json({ 
         status: 'ok', 

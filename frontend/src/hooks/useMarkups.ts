@@ -16,7 +16,9 @@ export interface Markup {
     name: string;
   };
   createdAt: string;
-  allowedEditUserIds?: string[];
+  updatedBy?: { id: string; name: string };
+  updatedAt?: string;
+  allowedEditUserIds?: string[];  // ['*'] = unrestricted; [] = nobody; [ids] = specific users
   allowedDeleteUserIds?: string[];
 }
 
@@ -53,21 +55,29 @@ export function useMarkups(documentId: string | undefined) {
     const { doc, provider } = ydocs[documentId];
     const ymap = doc.getMap<Markup>('markups');
 
-    const updateState = () => {
-      setMarkups(Array.from(ymap.values()));
+    // RAF-batch: coalesce rapid Yjs updates (e.g. bulk imports, collab bursts)
+    // into a single React state update per animation frame.
+    let rafId: number | null = null;
+    const scheduleUpdate = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        setMarkups(Array.from(ymap.values()));
+      });
     };
 
-    ymap.observe(updateState);
+    ymap.observe(scheduleUpdate);
     provider.on('sync', (synced: boolean) => {
       setIsSynced(synced);
-      updateState();
+      scheduleUpdate();
     });
 
-    // Initial state
-    updateState();
+    // Initial state — immediate, no debounce
+    setMarkups(Array.from(ymap.values()));
 
     return () => {
-      ymap.unobserve(updateState);
+      ymap.unobserve(scheduleUpdate);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, [documentId]);
 
@@ -101,8 +111,9 @@ export function useCreateMarkup() {
           authorId: user?.id || '',
           author: { id: user?.id || '', name: user?.name || user?.email || 'Unknown' },
           createdAt: new Date().toISOString(),
-          allowedEditUserIds: data.allowedEditUserIds || [],
-          allowedDeleteUserIds: data.allowedDeleteUserIds || [],
+          // ['*'] = everyone, [] = nobody, [ids] = specific — null/undefined defaults to ['*']
+          allowedEditUserIds: data.allowedEditUserIds != null ? data.allowedEditUserIds : ['*'],
+          allowedDeleteUserIds: data.allowedDeleteUserIds != null ? data.allowedDeleteUserIds : ['*'],
         };
         ymap.set(id, newMarkup);
         return newMarkup;

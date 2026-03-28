@@ -22,6 +22,7 @@ router.post('/', upload.single('file'), (req, res, next) => {
 }, DocumentController.uploadDocument);
 
 router.put('/:documentId/replace', upload.single('file'), checkDocumentAccess('canEdit'), DocumentController.replaceDocument);
+router.post('/:documentId/copy-markups', checkDocumentAccess('canEdit'), DocumentController.copyMarkupsFromDocument);
 
 // Scale update
 router.patch('/:documentId/scale', checkDocumentAccess('canEdit'), DocumentController.updateDocumentScale);

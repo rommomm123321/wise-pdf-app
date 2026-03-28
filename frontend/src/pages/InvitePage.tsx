@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import {
   Box,
-  Card,
-  CardContent,
+  Button,
   Typography,
   Chip,
   CircularProgress,
   Alert,
   Stack,
+  Divider,
 } from '@mui/material';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -72,8 +72,11 @@ export default function InvitePage() {
 
       if (data.status === 'ok' && data.token) {
         localStorage.setItem('token', data.token);
+        if (info?.companyName) {
+          localStorage.setItem('welcomeToCompany', info.companyName);
+        }
         navigate('/');
-        window.location.reload(); // Reload to pick up new auth state
+        window.location.reload();
       }
     } catch (err: any) {
       setError(err.message || 'Failed to accept invitation');
@@ -84,23 +87,20 @@ export default function InvitePage() {
 
   if (loading) {
     return (
-      <Box minHeight="100vh" display="flex" justifyContent="center" alignItems="center">
-        <CircularProgress />
+      <Box minHeight="100vh" display="flex" justifyContent="center" alignItems="center" sx={{ bgcolor: '#0f0f0f' }}>
+        <CircularProgress sx={{ color: '#c9a227' }} />
       </Box>
     );
   }
 
   if (error) {
     return (
-      <Box minHeight="100vh" display="flex" justifyContent="center" alignItems="center" px={2}>
-        <Card sx={{ maxWidth: 440, width: '100%' }}>
-          <CardContent sx={{ p: 4, textAlign: 'center' }}>
-            <Typography variant="h4" fontWeight={700} color="primary" gutterBottom>
-              {t('appName')}
-            </Typography>
-            <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>
-          </CardContent>
-        </Card>
+      <Box minHeight="100vh" display="flex" justifyContent="center" alignItems="center" px={2} sx={{ bgcolor: '#0f0f0f' }}>
+        <Box sx={{ maxWidth: 440, width: '100%', bgcolor: '#1a1a1a', borderRadius: 3, border: '1px solid #2a2a2a', p: 4, textAlign: 'center' }}>
+          <img src="https://wise-bim.com/logo-short.png" alt="Wise Logo" style={{ height: 60, marginBottom: 12 }} />
+          <Typography variant="h5" fontWeight={800} color="#fff" mb={3}>Redlines</Typography>
+          <Alert severity="error">{error}</Alert>
+        </Box>
       </Box>
     );
   }
@@ -113,59 +113,101 @@ export default function InvitePage() {
       justifyContent="center"
       alignItems="center"
       px={2}
+      sx={{ bgcolor: '#0f0f0f' }}
     >
-      <Typography variant="h3" fontWeight={700} color="primary" gutterBottom>
-        {t('appName')}
-      </Typography>
+      {/* Logo */}
+      <Box textAlign="center" mb={4}>
+        <img src="https://wise-bim.com/logo-short.png" alt="Wise Logo" style={{ height: 80, marginBottom: 8 }} />
+        <Typography variant="caption" sx={{ display: 'block', color: '#666', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: 1 }}>Collaborative PDF Platform</Typography>
+      </Box>
 
-      <Card sx={{ maxWidth: 500, width: '100%', mt: 3 }}>
-        <CardContent sx={{ p: 4 }}>
-          <Typography variant="h6" gutterBottom textAlign="center">
-            {t('acceptInvitation')}
+      {/* Card */}
+      <Box sx={{ maxWidth: 480, width: '100%', bgcolor: '#1a1a1a', borderRadius: 3, border: '1px solid #2a2a2a', overflow: 'hidden' }}>
+        {/* Header */}
+        <Box sx={{ px: 4, py: 3, borderBottom: '1px solid #2a2a2a', background: 'linear-gradient(135deg, #1a1a1a 0%, #1f1a0e 100%)' }}>
+          <Typography variant="h6" fontWeight={700} color="#fff">{t('acceptInvitation')}</Typography>
+          <Typography variant="body2" sx={{ color: '#666', mt: 0.5 }}>
+            You've been invited to join a workspace
           </Typography>
+        </Box>
 
-          {info && (
-            <Stack spacing={2} mt={2}>
+        {/* Body */}
+        {info && (
+          <Box sx={{ px: 4, py: 3 }}>
+            <Stack spacing={2.5}>
+              {/* Company */}
               <Box>
-                <Typography variant="body2" color="text.secondary">{t('invitationCompany')}</Typography>
-                <Typography variant="h6" fontWeight={600}>{info.companyName}</Typography>
+                <Typography variant="caption" sx={{ color: '#555', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, fontSize: '0.65rem' }}>
+                  {t('invitationCompany')}
+                </Typography>
+                <Typography variant="h6" fontWeight={700} color="#fff" mt={0.5}>{info.companyName}</Typography>
               </Box>
 
-              <Box>
-                <Typography variant="body2" color="text.secondary">{t('inviteRole')}</Typography>
-                <Chip label={info.role?.name || t('noRole')} sx={{ mt: 0.5, bgcolor: info.role?.color || 'secondary.main', color: '#fff' }} />
+              <Divider sx={{ borderColor: '#2a2a2a' }} />
+
+              {/* Email + Role row */}
+              <Box display="flex" gap={3} flexWrap="wrap">
+                <Box flex={1} minWidth={140}>
+                  <Typography variant="caption" sx={{ color: '#555', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, fontSize: '0.65rem' }}>
+                    {t('inviteEmail')}
+                  </Typography>
+                  <Typography variant="body2" color="#ccc" mt={0.5}>{info.email}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#555', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, fontSize: '0.65rem' }}>
+                    {t('inviteRole')}
+                  </Typography>
+                  <Box mt={0.5}>
+                    <Chip
+                      label={info.role?.name || t('noRole')}
+                      size="small"
+                      sx={{ bgcolor: info.role?.color || '#c9a227', color: '#000', fontWeight: 700, fontSize: '0.72rem' }}
+                    />
+                  </Box>
+                </Box>
               </Box>
 
-              <Box>
-                <Typography variant="body2" color="text.secondary">{t('inviteEmail')}</Typography>
-                <Typography variant="body1">{info.email}</Typography>
-              </Box>
-
+              {/* Projects */}
               {info.projects.length > 0 && (
                 <Box>
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                  <Typography variant="caption" sx={{ color: '#555', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, fontSize: '0.65rem' }}>
                     {t('inviteProjects')}
                   </Typography>
-                  <Box display="flex" gap={0.5} flexWrap="wrap">
+                  <Box display="flex" gap={0.5} flexWrap="wrap" mt={0.5}>
                     {info.projects.map((p) => (
-                      <Chip key={p.id} label={p.name} size="small" variant="outlined" />
+                      <Chip key={p.id} label={p.name} size="small" variant="outlined" sx={{ borderColor: '#333', color: '#aaa', fontSize: '0.72rem' }} />
                     ))}
                   </Box>
                 </Box>
               )}
 
-              <Box mt={2} textAlign="center">
+              <Divider sx={{ borderColor: '#2a2a2a' }} />
+
+              {/* Auth */}
+              <Box>
                 {accepting ? (
-                  <CircularProgress />
+                  <Box display="flex" justifyContent="center" py={2}>
+                    <CircularProgress size={32} sx={{ color: '#c9a227' }} />
+                  </Box>
                 ) : clientId ? (
                   <GoogleOAuthProvider clientId={clientId}>
-                    <Typography variant="body2" color="text.secondary" mb={2}>
-                      {t('inviteAcceptHint')}
+                    <Typography variant="body2" sx={{ color: '#666', mb: 2, textAlign: 'center', fontSize: '0.8rem' }}>
+                      {t('inviteAcceptHint', 'Sign in with Google to accept')}
                     </Typography>
-                    <Box display="flex" justifyContent="center">
+                    {/* Hidden real GoogleLogin — provides secure credential flow */}
+                    <Box sx={{ display: 'flex', justifyContent: 'center',
+                      '& > div': { borderRadius: '10px !important', overflow: 'hidden' },
+                      // Override Google button colors to match dark theme
+                      '& iframe': { colorScheme: 'dark' },
+                    }}>
                       <GoogleLogin
                         onSuccess={handleAccept}
                         onError={() => setError('Google login failed')}
+                        theme="filled_black"
+                        shape="rectangular"
+                        text="continue_with"
+                        size="large"
+                        width="320"
                       />
                     </Box>
                   </GoogleOAuthProvider>
@@ -174,9 +216,16 @@ export default function InvitePage() {
                 )}
               </Box>
             </Stack>
-          )}
-        </CardContent>
-      </Card>
+          </Box>
+        )}
+
+        {/* Footer */}
+        <Box sx={{ px: 4, py: 2, borderTop: '1px solid #2a2a2a', bgcolor: '#111' }}>
+          <Typography variant="caption" sx={{ color: '#444', fontSize: '0.7rem' }}>
+            Expires: {info ? new Date(info.expiresAt).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+          </Typography>
+        </Box>
+      </Box>
     </Box>
   );
 }

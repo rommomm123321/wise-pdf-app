@@ -128,6 +128,7 @@ export function useUploadDocument() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] });
+      qc.invalidateQueries({ queryKey: ['folder-tree'] });
     },
   });
 
@@ -140,6 +141,7 @@ export function useDeleteDocument() {
     mutationFn: (id: string) => apiFetch(`/api/documents/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] });
+      qc.invalidateQueries({ queryKey: ['folder-tree'] });
     },
   });
 }
@@ -154,6 +156,7 @@ export function useReplaceDocument() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] });
+      qc.invalidateQueries({ queryKey: ['folder-tree'] });
     },
   });
 }
@@ -202,6 +205,7 @@ export function useBulkDeleteDocuments() {
       apiFetch('/api/documents/bulk/delete', { method: 'POST', body: JSON.stringify({ documentIds }) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] });
+      qc.invalidateQueries({ queryKey: ['folder-tree'] });
     },
   });
 }
@@ -237,6 +241,7 @@ export function useBulkMoveDocuments() {
       apiFetch('/api/documents/bulk/move', { method: 'POST', body: JSON.stringify({ documentIds, targetFolderId }) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] });
+      qc.invalidateQueries({ queryKey: ['folder-tree'] });
     },
   });
 }

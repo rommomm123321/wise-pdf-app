@@ -9,6 +9,7 @@ import DocumentViewPage from './pages/DocumentViewPage';
 import AuditLogPage from './pages/AuditLogPage';
 import CompaniesPage from './pages/CompaniesPage';
 import GlobalErrorBoundary from './components/layout/GlobalErrorBoundary';
+import NotFoundPage from './pages/NotFoundPage';
 
 import { useAuth } from './contexts/AuthContext';
 
@@ -47,6 +48,6 @@ export const router = createBrowserRouter([
   },
   {
     path: '*',
-    element: <IndexRedirect />,
+    element: <NotFoundPage />,
   },
 ]);

@@ -57,7 +57,7 @@ function FolderNode({
 
   return (
     <Box sx={{ pl: level * 2 }}>
-      <ListItem dense disableGutters>
+      <ListItem>
         <ListItemIcon sx={{ minWidth: 32 }}>
           {hasChildren ? (
             <IconButton size="small" onClick={() => setOpen(!open)}>
@@ -76,7 +76,7 @@ function FolderNode({
       </ListItem>
 
       <Collapse in={open} timeout="auto" unmountOnExit>
-        <List dense disablePadding>
+        <List>
           {folder.children?.map((child: any) => (
             <FolderNode 
               key={child.id} 
@@ -115,7 +115,7 @@ export default function SelectiveAccessDialog({
           {t('selectiveHintFoldersOnly', 'Select folders this user should access. Granting access to a folder automatically grants access to all files within it.')}
         </Typography>
         
-        <List dense>
+        <List>
           {tree.map((folder: any) => (
             <FolderNode 
               key={folder.id} 

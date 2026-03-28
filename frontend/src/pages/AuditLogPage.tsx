@@ -148,17 +148,39 @@ const AuditLogCard = ({
 
       {showCol("details") && (
         <Box sx={{ bgcolor: "action.hover", p: 1, borderRadius: 1, mt: 1 }}>
-          <Typography
-            variant="caption"
-            sx={{
-              wordBreak: "break-all",
-              fontFamily: "monospace",
-              fontSize: "0.7rem",
-              opacity: 0.8,
-            }}
-          >
-            {JSON.stringify(log.details)}
-          </Typography>
+          {log.action === "MARKUP_UPDATE" && log.details?.diff ? (
+            <Box>
+              {Object.entries(log.details.diff).map(([key, val]: any) => (
+                <Box key={key} sx={{ display: "flex", gap: 1, alignItems: "center", mb: 0.5 }}>
+                  <Typography sx={{ fontSize: "0.65rem", fontWeight: 700, color: "text.secondary", minWidth: 90, flexShrink: 0 }}>
+                    {key}
+                  </Typography>
+                  <Box sx={{ display: "flex", gap: 0.5, alignItems: "center", minWidth: 0 }}>
+                    {val.before != null && (
+                      <Typography sx={{ fontSize: "0.65rem", fontFamily: "monospace", textDecoration: "line-through", color: "error.main", opacity: 0.8, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {String(val.before)}
+                      </Typography>
+                    )}
+                    {val.before != null && val.after != null && (
+                      <Typography sx={{ fontSize: "0.65rem", color: "text.disabled" }}>→</Typography>
+                    )}
+                    {val.after != null && (
+                      <Typography sx={{ fontSize: "0.65rem", fontFamily: "monospace", color: "success.main", fontWeight: 600, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {String(val.after)}
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <Typography
+              variant="caption"
+              sx={{ wordBreak: "break-all", fontFamily: "monospace", fontSize: "0.7rem", opacity: 0.8 }}
+            >
+              {JSON.stringify(log.details)}
+            </Typography>
+          )}
         </Box>
       )}
     </Paper>

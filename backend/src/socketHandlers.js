@@ -19,6 +19,8 @@ module.exports = function setupSocketHandlers(io) {
 
   io.on("connection", (socket) => {
     console.log(`User connected to socket: ${socket.id}, userId: ${socket.user.userId}`);
+    // Join personal room for direct notifications
+    socket.join(`user:${socket.user.userId}`);
 
     // Join room for specific document
     socket.on("markup:join", (documentId) => {
@@ -54,6 +56,9 @@ module.exports = function setupSocketHandlers(io) {
             coordinates,
             properties: properties || {},
             authorId: socket.user.userId,
+            // ['*'] = unrestricted (everyone), null/undefined → unrestricted
+            allowedEditUserIds: data.allowedEditUserIds != null ? data.allowedEditUserIds : ['*'],
+            allowedDeleteUserIds: data.allowedDeleteUserIds != null ? data.allowedDeleteUserIds : ['*'],
           },
           include: { author: { select: { id: true, name: true } } },
         });

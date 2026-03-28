@@ -2,13 +2,9 @@ import { io, Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
 
-export function getSocket(): Socket {
+export function getSocket(token?: string): Socket {
   if (!socket) {
-    const token = localStorage.getItem('token');
-    
-    // In production, you might want to use a specific URL
-    // For development with Vite proxy, we can use the current origin
-    const url = window.location.protocol + '//' + window.location.hostname + ':3000'; // Assuming backend runs on 3000
+    const url = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':3000' : ''); 
 
     socket = io(url, {
       auth: { token },
@@ -19,6 +15,10 @@ export function getSocket(): Socket {
     socket.on('connect_error', (err) => {
       console.error('Socket connection error:', err.message);
     });
+  } else if (token && socket.auth && (socket.auth as any).token !== token) {
+    // Update token if it changed and reconnect
+    socket.auth = { token };
+    socket.disconnect().connect();
   }
   return socket;
 }

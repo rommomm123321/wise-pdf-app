@@ -1,4 +1,5 @@
-const express = require("express");
+const express = require('express');
+
 const path = require("path");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
@@ -278,6 +279,7 @@ const markupRoutes = require("./src/routes/markupRoutes");
 const auditRoutes = require("./src/routes/auditRoutes");
 const presetRoutes = require("./src/routes/presetRoutes");
 const projectMarkupFieldRoutes = require("./src/routes/projectMarkupFieldRoutes");
+const notificationRoutes = require("./src/routes/notificationRoutes");
 
 app.use("/api/companies", companyRoutes);
 app.use("/api/projects", projectRoutes);
@@ -292,6 +294,7 @@ app.use("/api/markups", markupRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/presets", presetRoutes);
 app.use("/api/project-markup-fields", projectMarkupFieldRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Настройка Socket.io подключений
 const setupSocketHandlers = require("./src/socketHandlers");
@@ -321,7 +324,7 @@ const WebSocket = require('ws');
 const setupYjsWebSocket = require('./src/yjsServer');
 const wss = new WebSocket.Server({ noServer: true });
 
-setupYjsWebSocket(wss);
+setupYjsWebSocket(wss, io);
 
 httpServer.on('upgrade', (request, socket, head) => {
   if (request.url.startsWith('/yjs/')) {

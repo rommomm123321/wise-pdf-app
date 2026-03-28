@@ -9,6 +9,12 @@ router.use(authMiddleware);
 // Get markups — нужен canView на документе
 router.get('/document/:documentId', checkDocumentAccess('canView'), MarkupController.getMarkupsByDocument);
 
+// Batch create markups (PDF/Bluebeam import) — нужен canMarkup на документе
+router.post('/batch', (req, res, next) => {
+  req.params.documentId = req.body.documentId;
+  return checkDocumentAccess('canMarkup')(req, res, next);
+}, MarkupController.batchCreateMarkups);
+
 // Create markup — нужен canMarkup на документе
 router.post('/', (req, res, next) => {
   req.params.documentId = req.body.documentId; // Передаем ID для мидлвары

@@ -14,7 +14,25 @@ createRoot(document.getElementById('root')!).render(
     <ThemeContextProvider>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <Toaster position="bottom-right" />
+          <Toaster
+            position="bottom-right"
+            toastOptions={{
+              style: {
+                background: '#1A1A1A',
+                color: '#FFFFFF',
+                border: '1px solid #F3C24B',
+                borderRadius: '10px',
+                fontSize: '0.8rem',
+                padding: '10px 14px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                maxWidth: '360px',
+              },
+              success: {
+                iconTheme: { primary: '#F3C24B', secondary: '#1A1A1A' },
+                duration: 6000,
+              },
+            }}
+          />
           <App />
         </AuthProvider>
       </QueryClientProvider>

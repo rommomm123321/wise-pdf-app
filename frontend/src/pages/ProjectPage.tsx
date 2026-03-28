@@ -34,6 +34,9 @@ import {
 } from "@mui/material";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { apiFetch } from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
+import { exportDocumentWithMarkups } from "../utils/exportPdfWithMarkups";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import type { DropResult } from "@hello-pangea/dnd";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -44,6 +47,7 @@ import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import HistoryIcon from "@mui/icons-material/History";
+import LayersIcon from "@mui/icons-material/Layers";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import DownloadIcon from "@mui/icons-material/Download";
 import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
@@ -245,6 +249,7 @@ function DocumentMobileCard({
   onVersions,
   onDelete,
   onReplace,
+  onExportWithMarkups,
   canEdit,
   canDelete,
   canManage,
@@ -255,6 +260,7 @@ function DocumentMobileCard({
   navigate,
   projectId,
 }: any) {
+  const { token: mobileToken } = useAuth();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const handleMenuOpen = (e: React.MouseEvent<HTMLElement>) => {
     e.stopPropagation();
@@ -350,19 +356,37 @@ function DocumentMobileCard({
         </MenuItem>
         {canDownload && (
           <MenuItem
-            component="a"
-            href={doc.storageUrl}
-            target="_blank"
-            rel="noopener"
             onClick={(e) => {
               e.stopPropagation();
               handleMenuClose();
+              fetch(`/api/documents/${doc.id}/proxy`, { headers: { Authorization: `Bearer ${mobileToken}` } })
+                .then(r => r.blob())
+                .then(blob => {
+                  const url = URL.createObjectURL(blob);
+                  const a = window.document.createElement('a');
+                  a.href = url; a.download = doc.name; a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                });
             }}
           >
             <DownloadIcon fontSize="small" sx={{ mr: 1 }} />
-            {t("download")}
+            {t("downloadClean", "Download (clean PDF)")}
           </MenuItem>
         )}
+        {canDownload && onExportWithMarkups && (
+          <MenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleMenuClose();
+              onExportWithMarkups(doc.id, doc.name);
+            }}
+          >
+            <LayersIcon fontSize="small" sx={{ mr: 1 }} />
+            {t("downloadWithMarkups", "Download with markups")}
+          </MenuItem>
+        )}
+        {canDownload && <Divider />}
         <MenuItem
           onClick={(e) => {
             e.stopPropagation();
@@ -443,6 +467,7 @@ export default function ProjectPage() {
   const isExtraSmall = useMediaQuery("(max-width:480px)");
   const navigate = useNavigate();
 
+  const { token } = useAuth();
   const { data: project } = useProject(projectId);
   const { data: tree } = useFolderTree(projectId);
   const { data: rootFolder, isLoading: rootLoading } = useRootFolder(projectId);
@@ -498,6 +523,43 @@ export default function ProjectPage() {
   const { mutate: performUpload, uploads } = useUploadDocument();
   const deleteDocument = useDeleteDocument();
   const replaceDocument = useReplaceDocument();
+
+  const handleExportWithMarkups = useCallback(async (docId: string, docName: string) => {
+    if (!token) return;
+    const toastId = toast.loading(
+      <div style={{ minWidth: 220 }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Preparing export…</div>
+        <LinearProgress variant="indeterminate" sx={{ borderRadius: 1 }} />
+      </div>,
+      { duration: Infinity }
+    );
+    try {
+      await exportDocumentWithMarkups({
+        documentId: docId,
+        docName,
+        authToken: token,
+        onProgress: (current, total) => {
+          toast.loading(
+            <div style={{ minWidth: 220 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                Exporting page {current} / {total}
+              </div>
+              <LinearProgress
+                variant="determinate"
+                value={total > 0 ? Math.round((current / total) * 100) : 0}
+                sx={{ borderRadius: 1 }}
+              />
+            </div>,
+            { id: toastId, duration: Infinity }
+          );
+        },
+      });
+      toast.success('PDF exported successfully', { id: toastId });
+    } catch (e) {
+      console.error(e);
+      toast.error('Export failed', { id: toastId });
+    }
+  }, [token]);
   const bulkDeleteFolders = useBulkDeleteFolders();
   const bulkDeleteDocs = useBulkDeleteDocuments();
   const moveFolder = useMoveFolder();
@@ -1442,6 +1504,7 @@ export default function ProjectPage() {
                                   onShare={(id, name) =>
                                     setShareDocData({ id, name })
                                   }
+                                  onExportWithMarkups={canDownload ? handleExportWithMarkups : undefined}
                                   canDownload={canDownload}
                                   canDelete={canDelete}
                                   canEdit={canEdit}
@@ -1480,6 +1543,7 @@ export default function ProjectPage() {
                           onVersions={(id: string, name: string) =>
                             setVersionsDocData({ id, name })
                           }
+                          onExportWithMarkups={canDownload ? handleExportWithMarkups : undefined}
                           canEdit={canEdit}
                           canDelete={canDelete}
                           canManage={canManage}
@@ -1575,6 +1639,7 @@ export default function ProjectPage() {
                                   onShare={(id, name) =>
                                     setShareDocData({ id, name })
                                   }
+                                  onExportWithMarkups={canDownload ? handleExportWithMarkups : undefined}
                                   canDownload={canDownload}
                                   canDelete={canDelete}
                                   canEdit={canEdit}
@@ -1725,13 +1790,30 @@ export default function ProjectPage() {
       <ReplaceDocumentDialog
         open={!!replaceDocId}
         onClose={() => setReplaceDocId(null)}
-        onReplace={(file) =>
-          replaceDocId &&
+        markupCount={
+          (contents?.data?.documents ?? []).find((d: any) => d.id === replaceDocId)?.allVersionMarkupsCount ?? 0
+        }
+        onReplace={(file, transferMarkups) => {
+          if (!replaceDocId) return;
           replaceDocument.mutate(
             { documentId: replaceDocId, file },
-            { onSuccess: () => setReplaceDocId(null) },
-          )
-        }
+            {
+              onSuccess: async (data: any) => {
+                setReplaceDocId(null);
+                if (transferMarkups && data?.data?.id) {
+                  try {
+                    await apiFetch(`/api/documents/${data.data.id}/copy-markups`, {
+                      method: 'POST',
+                      body: JSON.stringify({}),
+                    });
+                  } catch (e) {
+                    console.error('Failed to copy markups:', e);
+                  }
+                }
+              },
+            },
+          );
+        }}
         isReplacing={replaceDocument.isPending}
       />
       <RenameDialog

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -18,9 +18,11 @@ import DarkModeIcon from '@mui/icons-material/DarkMode';
 import ExitToAppIcon from '@mui/icons-material/ExitToApp';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import SearchBar from '../search/SearchBar';
+import NotificationBell from './NotificationBell';
 
 interface AppHeaderProps {
   onToggleSidebar: () => void;
@@ -34,16 +36,22 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
   const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isExtraSmall = useMediaQuery('(max-width:450px)');
   const isDocView = location.pathname.includes('/documents/');
   const showBurger = isMobile || isDocView;
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
+  useEffect(() => {
+    const company = localStorage.getItem('welcomeToCompany');
+    if (company) {
+      localStorage.removeItem('welcomeToCompany');
+      toast.success(`Welcome to ${company}!`, { duration: 8000, icon: '🎉' });
+    }
+  }, []);
+
   const handleLogout = () => {
     setAnchorEl(null);
     logout();
-    navigate('/login');
   };
 
   return (
@@ -90,13 +98,13 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
           )}
 
           <Box
-            sx={{ display: isExtraSmall ? 'none' : 'flex', alignItems: 'center', cursor: 'pointer', mr: 2, ml: 1, flexShrink: 0 }}
+            sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', mr: { xs: 1, sm: 2 }, ml: 1, flexShrink: 0 }}
             onClick={() => navigate('/')}
           >
             <img src="https://wise-bim.com/logo-short.png" alt="Wise Logo" style={{ height: 32 }} />
           </Box>
 
-          {!isExtraSmall && <SearchBar />}
+          <SearchBar />
 
           <Box sx={{ flexGrow: 1 }} />
 
@@ -105,8 +113,11 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
             {mode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
           </IconButton>
 
+          {/* Notifications */}
+          <NotificationBell />
+
           {/* User menu */}
-          <IconButton onClick={(e) => setAnchorEl(e.currentTarget)} sx={{ ml: 1 }}>
+          <IconButton onClick={(e) => setAnchorEl(e.currentTarget)} sx={{ ml: 1, p: 0.5, '&:focus-visible': { outline: 'none' }, '&::after': { display: 'none' } }}>
             <Avatar sx={{ width: 32, height: 32, bgcolor: isImpersonating ? 'warning.main' : 'secondary.main', fontSize: '0.875rem' }}>
               {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || '?'}
             </Avatar>
@@ -128,11 +139,6 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
               <MenuItem onClick={() => { setAnchorEl(null); stopImpersonating(); }}>
                 <ExitToAppIcon fontSize="small" sx={{ mr: 1 }} />
                 {t('stopImpersonating', 'Back to admin')}
-              </MenuItem>
-            )}
-            {isExtraSmall && (
-              <MenuItem onClick={() => navigate('/search')}>
-                {t('search', 'Search')}
               </MenuItem>
             )}
             <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
