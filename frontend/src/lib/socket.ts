@@ -4,7 +4,7 @@ let socket: Socket | null = null;
 
 export function getSocket(token?: string): Socket {
   if (!socket) {
-    const url = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':3000' : ''); 
+    const url = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':3030' : ''); 
 
     socket = io(url, {
       auth: { token },

@@ -1,11 +1,10 @@
 import { memo, useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Box, Tabs, Tab, useTheme, alpha, IconButton, Tooltip,
-  LinearProgress, List, ListItemButton, ListItemText, Chip, Button,
-  Typography, CircularProgress, ListItemIcon, RadioGroup, FormControlLabel, Radio, Select, MenuItem, Collapse, useMediaQuery
+  LinearProgress, List, ListItemButton, ListItemText,
+  Typography, CircularProgress, ListItemIcon, RadioGroup, FormControlLabel, Radio, useMediaQuery,
+  Select, MenuItem, Divider,
 } from '@mui/material';
-import FileDownloadIcon from '@mui/icons-material/FileDownload';
-import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import DrawIcon from '@mui/icons-material/Draw';
 import SearchIcon from '@mui/icons-material/Search';
 import LayersIcon from '@mui/icons-material/Layers';
@@ -14,22 +13,9 @@ import BookmarkIcon from '@mui/icons-material/Bookmark';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import ClearIcon from '@mui/icons-material/Clear';
-import DeleteIcon from '@mui/icons-material/Delete';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import PersonIcon from '@mui/icons-material/Person';
-import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import { useTranslation } from 'react-i18next';
-import MarkupListItem, { STATUS_COLORS, STATUS_LABELS } from './MarkupListItem';
 import { Page, Document } from 'react-pdf';
-import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
-import isToday from 'dayjs/plugin/isToday';
-import isYesterday from 'dayjs/plugin/isYesterday';
-
-dayjs.extend(relativeTime);
-dayjs.extend(isToday);
-dayjs.extend(isYesterday);
+import { MarkupTable } from './MarkupTable';
 
 const SIDEBAR_WIDTH = 260;
 
@@ -77,18 +63,43 @@ interface PdfSidebarProps {
   bookmarks?: any[];
   onJumpToBookmark?: (dest: any) => void;
   pdfData?: string;
+  documentId?: string;
+  token?: string;
   currentPage?: number;
   pageLabels?: string[];
   currentUserId?: string;
   isAdmin?: boolean;
   onBulkUpdateProperty?: (ids: string[], key: string, value: any) => void;
+  /** OCG layers detected in the PDF (from Bluebeam overlay PDFs etc.) */
+  pdfLayers?: { name: string; visible: boolean }[];
+  onTogglePdfLayer?: (name: string) => void;
 }
 
-const BookmarkItem = ({ item, onJump, isActive, currentPage }: { item: any, onJump: (dest: any) => void, isActive: boolean, currentPage: number }) => {
+const BookmarkItem = ({ item, onJump, currentPage, pageLabels }: { item: any, onJump: (dest: any) => void, currentPage: number, pageLabels: string[] }) => {
   const [open, setOpen] = useState(true);
   const theme = useTheme();
   const gold = theme.palette.primary.main;
   const hasChildren = item.items && item.items.length > 0;
+  
+  // A bookmark is active if its exact title matches the current page's label, or one of its children is active
+  const isSelfActive = pageLabels[currentPage - 1] === item.title;
+  let hasActiveChild = false;
+  if (hasChildren) {
+    const checkActive = (nodes: any[]) => {
+      for (const node of nodes) {
+        if (pageLabels[currentPage - 1] === node.title) hasActiveChild = true;
+        if (node.items) checkActive(node.items);
+      }
+    };
+    checkActive(item.items);
+  }
+  
+  const isActive = isSelfActive || hasActiveChild;
+
+  useEffect(() => {
+    // Auto-expand if active
+    if (isActive) setOpen(true);
+  }, [isActive]);
 
   return (
     <>
@@ -96,48 +107,109 @@ const BookmarkItem = ({ item, onJump, isActive, currentPage }: { item: any, onJu
         onClick={() => { if (hasChildren) setOpen(!open); onJump(item.dest); }}
         sx={{ pl: (item.level || 0) * 2 + 1.5, bgcolor: isActive ? alpha(gold, 0.1) : 'transparent', '&:hover': { bgcolor: isActive ? alpha(gold, 0.15) : alpha(gold, 0.05) }, alignItems: 'flex-start' }}
       >
-        <ListItemText primary={item.title} primaryTypographyProps={{ fontSize: '0.75rem', fontWeight: isActive || hasChildren ? 600 : 400, color: isActive ? gold : 'text.primary', sx: { wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: 1.35, overflowWrap: 'anywhere' } }} />
+        <ListItemText primary={item.title} primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: isActive || hasChildren ? 600 : 400, color: isActive ? gold : 'text.primary', sx: { wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: 1.35, overflowWrap: 'anywhere' } }} />
       </ListItemButton>
       {open && hasChildren && item.items.map((sub: any, i: number) => (
-        <BookmarkItem key={i} item={{ ...sub, level: (item.level || 0) + 1 }} onJump={onJump} isActive={isActive} currentPage={currentPage} />
+        <BookmarkItem key={i} item={{ ...sub, level: (item.level || 0) + 1 }} onJump={onJump} currentPage={currentPage} pageLabels={pageLabels} />
       ))}
     </>
   );
 };
 
-// Lazy-rendered page thumbnail — only renders <Page> when near the viewport
-const LazyPageThumbnail = memo(({ pageNum, isActive, gold, jumpToPage, label }: { pageNum: number; isActive: boolean; gold: string; jumpToPage?: (p: number) => void; label: string }) => {
+// Lazy-rendered page thumbnail — uses tile server if available, falls back to react-pdf
+const LazyPageThumbnail = memo(({ pageNum, isActive, gold, jumpToPage, label, documentId, token, pdfFileUrl }: {
+  pageNum: number; isActive: boolean; gold: string; jumpToPage?: (p: number) => void;
+  label: string; documentId?: string; token?: string; pdfFileUrl?: string;
+}) => {
   const [visible, setVisible] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [useFallback, setUseFallback] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => { if (entry.isIntersecting) { setVisible(true); observer.disconnect(); } },
-      { rootMargin: '300px' }
+      { rootMargin: '400px' }
     );
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  const thumbnailUrl = useMemo(() => {
+    if (!documentId || !token || useFallback) return undefined;
+    const cacheBust = retryCount > 0 ? `&r=${retryCount}` : '';
+    return `/thumbnail/${documentId}/${pageNum - 1}?token=${token}${cacheBust}`;
+  }, [documentId, pageNum, token, retryCount, useFallback]);
+
+  const handleError = useCallback(() => {
+    setUseFallback(true); // tile server unavailable or error — switch to react-pdf
+  }, []);
+
+  // Remove the artificial 2s timeout. Allow the tile server to process the request,
+  // especially if it needs to download the PDF for the first time.
+  // Errors will still trigger `handleError` via the `onError` image event.
+
+  const pdfFile = useMemo(() => {
+    if (!pdfFileUrl || !token) return undefined;
+    return { url: pdfFileUrl, httpHeaders: { Authorization: `Bearer ${token}` } };
+  }, [pdfFileUrl, token]);
+
   return (
     <Box ref={ref} onClick={() => jumpToPage?.(pageNum)}
-      sx={{ py: 2, px: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, cursor: 'pointer',
+      sx={{ py: 1.5, px: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.75, cursor: 'pointer',
         bgcolor: isActive ? alpha(gold, 0.12) : 'transparent',
         borderBottom: '1px solid rgba(0,0,0,0.04)',
-        '&:hover': { bgcolor: isActive ? alpha(gold, 0.18) : alpha(gold, 0.04) },
+        '&:hover': { bgcolor: isActive ? alpha(gold, 0.18) : alpha(gold, 0.05) },
         transition: 'background-color 0.15s' }}
     >
-      <Box sx={{ width: 140, border: 1, borderColor: isActive ? gold : 'divider', borderRadius: 0.5, overflow: 'hidden', bgcolor: 'white',
-        boxShadow: isActive ? `0 0 15px ${alpha(gold, 0.4)}` : '0 2px 8px rgba(0,0,0,0.05)',
-        transform: isActive ? 'scale(1.02)' : 'scale(1)', transition: 'transform 0.2s', lineHeight: 0 }}>
-        {visible
-          ? <Page pageNumber={pageNum} width={140} renderTextLayer={false} renderAnnotationLayer={false} loading={<Box sx={{ width: 140, height: 100, bgcolor: 'grey.100', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><CircularProgress size={16} /></Box>} />
-          : <Box sx={{ width: 140, height: 100, bgcolor: 'grey.100', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><CircularProgress size={16} /></Box>
-        }
+      <Box sx={{
+        width: 130, minHeight: 90, border: `1.5px solid`, borderColor: isActive ? gold : 'divider',
+        borderRadius: '4px', overflow: 'hidden', bgcolor: 'white',
+        boxShadow: isActive ? `0 0 0 2px ${alpha(gold, 0.3)}, 0 4px 12px rgba(0,0,0,0.12)` : '0 2px 6px rgba(0,0,0,0.08)',
+        transform: isActive ? 'scale(1.03)' : 'scale(1)', transition: 'transform 0.18s, box-shadow 0.18s',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', lineHeight: 0,
+      }}>
+        {visible ? (
+          useFallback && pdfFile ? (
+            // react-pdf fallback when tile server unavailable
+            <Document file={pdfFile} loading={<CircularProgress size={24} />} error={null}>
+              <Page pageNumber={pageNum} width={130} renderTextLayer={false} renderAnnotationLayer={false} />
+            </Document>
+          ) : thumbnailUrl ? (
+            <>
+              {!imgLoaded && (
+                <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'grey.50' }}>
+                  <CircularProgress size={24} />
+                </Box>
+              )}
+              <img
+                src={thumbnailUrl}
+                alt={`Page ${pageNum}`}
+                style={{ width: '100%', height: 'auto', display: imgLoaded ? 'block' : 'none' }}
+                onLoad={() => setImgLoaded(true)}
+                onError={handleError}
+              />
+            </>
+          ) : (
+            <Box sx={{ width: 130, height: 90, bgcolor: 'grey.50', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CircularProgress size={24} />
+            </Box>
+          )
+        ) : (
+          <Box sx={{ width: 130, height: 90, bgcolor: 'grey.50', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <CircularProgress size={24} />
+          </Box>
+        )}
       </Box>
-      <Box sx={{ width: '100%', textAlign: 'center', px: 0.5 }}>
-        <Typography variant="body2" sx={{ fontSize: '0.72rem', fontWeight: isActive ? 700 : 500, wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: 1.3, color: isActive ? gold : 'text.primary', mt: 0.5 }}>{label}</Typography>
-      </Box>
+      <Typography sx={{
+        fontSize: '0.85rem', fontWeight: 500, wordBreak: 'break-word', lineHeight: 1.3,
+        color: isActive ? gold : 'text.secondary', textAlign: 'center', width: '100%', px: 0.25,
+      }}>
+        {label}
+      </Typography>
     </Box>
   );
 });
@@ -150,21 +222,18 @@ const PdfSidebar = memo(function PdfSidebar({
   searchKeyword: externalSearchKeyword, onSearchKeywordChange,
   searchScope = 'document', onSearchScopeChange,
   activeSearchResultIndex, onSearchResultSelect, onHighlightAll,
-  numPages = 0, bookmarks = [], onJumpToBookmark, pdfData,
+  numPages = 0, bookmarks = [], onJumpToBookmark, documentId, token, pdfData,
   currentPage = 1, pageLabels = [],
   currentUserId, isAdmin = false,
   onBulkUpdateProperty,
+  pdfLayers = [],
+  onTogglePdfLayer,
 }: PdfSidebarProps) {
   const [localSearchKeyword, setLocalSearchKeyword] = useState('');
   const [highlightAllColor, setHighlightAllColor] = useState('#ffff00');
-  const [filterAuthor, setFilterAuthor] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [showDateFilter, setShowDateFilter] = useState(false);
-  const [batchMode, setBatchMode] = useState(false);
-  const [expandedAuthors, setFilterExpandedAuthors] = useState<string[]>([]);
-  const [expandedDates, setFilterExpandedDates] = useState<string[]>([]);
+  const [searchGroupBy, setSearchGroupBy] = useState<'none' | 'page'>('none');
+  const [searchFilterType, setSearchFilterType] = useState<'all' | 'text' | 'markup'>('all');
+  const [searchSortBy, setSearchSortBy] = useState<'found' | 'page'>('found');
   
   const searchKeyword = externalSearchKeyword !== undefined ? externalSearchKeyword : localSearchKeyword;
   const setSearchKeyword = (val: string) => { if (onSearchKeywordChange) onSearchKeywordChange(val); else setLocalSearchKeyword(val); };
@@ -172,135 +241,26 @@ const PdfSidebar = memo(function PdfSidebar({
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
   const gold = theme.palette.primary.main;
-  const [filterText, setFilterText] = useState('');
-  const [filterType] = useState('all');
+  const inputSx = { width: '100%', padding: '7px 10px', borderRadius: '6px', border: `1px solid ${theme.palette.divider}`, background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)', color: theme.palette.text.primary, fontSize: '0.88rem', outline: 'none', transition: 'border-color 0.15s' };
 
-  // Cache createdAt → YYYY-MM-DD to avoid re-parsing immutable dates on every useMemo
-  const dateParseCache = useRef<Map<string, string>>(new Map());
-  const parseDateKey = (createdAt: string): string => {
-    if (dateParseCache.current.has(createdAt)) return dateParseCache.current.get(createdAt)!;
-    const d = dayjs(createdAt);
-    const result = d.isValid() ? d.format('YYYY-MM-DD') : 'Unknown Date';
-    dateParseCache.current.set(createdAt, result);
-    return result;
-  };
-
-  const filteredMarkups = useMemo(() => {
-    let result = (markups || []).filter(m => m.type !== 'auto-highlight' && !hiddenLayers.includes(m.type));
-    if (filterType !== 'all') result = result.filter(m => m.type === filterType);
-    if (filterAuthor !== 'all') result = result.filter(m => m.authorId === filterAuthor);
-    if (filterStatus !== 'all') result = result.filter(m => (m.properties?.status || 'open') === filterStatus);
-    if (filterDateFrom) result = result.filter(m => m.createdAt && new Date(m.createdAt) >= new Date(filterDateFrom));
-    if (filterDateTo) result = result.filter(m => m.createdAt && new Date(m.createdAt) <= new Date(filterDateTo + 'T23:59:59'));
-    if (filterText) {
-      const lower = filterText.toLowerCase();
-      result = result.filter((m: any) => m.type.toLowerCase().includes(lower) || (m.properties?.subject || '').toLowerCase().includes(lower) || (m.properties?.comment || '').toLowerCase().includes(lower));
-    }
-    return result;
-  }, [markups, filterText, filterType, filterAuthor, filterStatus, filterDateFrom, filterDateTo, hiddenLayers]);
-
-  const groupedMarkups = useMemo(() => {
-    const map = new Map<string, any>();
-    filteredMarkups.forEach(m => {
-      const authorId = m.authorId || 'unknown';
-      const authorName = m.author?.name || m.author?.email || 'Unknown';
-      const date = parseDateKey(m.createdAt);
-
-      if (!map.has(authorId)) map.set(authorId, { id: authorId, name: authorName, dates: new Map<string, any[]>() });
-      const authorData = map.get(authorId);
-      if (!authorData.dates.has(date)) authorData.dates.set(date, []);
-      authorData.dates.get(date)!.push(m);
-    });
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [filteredMarkups]);
-
-  const formatGroupDate = (dateStr: string) => {
-    if (dateStr === 'Unknown Date') return dateStr;
-    const d = dayjs(dateStr);
-    if (d.isToday()) return t('today', 'Today');
-    if (d.isYesterday()) return t('yesterday', 'Yesterday');
-    return d.format('DD MMM YYYY');
-  };
-
-  // Auto-expand only NEW (never-seen) groups — don't re-expand collapsed groups on delete/update
-  const seenAuthorsRef = useRef<Set<string>>(new Set());
-  const seenDateKeysRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (groupedMarkups.length === 0) return;
-    const newAuthors = groupedMarkups.filter(a => !seenAuthorsRef.current.has(a.id));
-    if (newAuthors.length > 0) {
-      newAuthors.forEach(a => seenAuthorsRef.current.add(a.id));
-      setFilterExpandedAuthors(prev => [...prev, ...newAuthors.map(a => a.id).filter(id => !prev.includes(id))]);
-    }
-    const newDateKeys: string[] = [];
-    groupedMarkups.forEach(a => {
-      Array.from(a.dates.keys()).forEach((d: any) => {
-        const key = `${a.id}-${d}`;
-        if (!seenDateKeysRef.current.has(key)) {
-          seenDateKeysRef.current.add(key);
-          newDateKeys.push(key);
-        }
-      });
-    });
-    if (newDateKeys.length > 0) {
-      setFilterExpandedDates(prev => [...prev, ...newDateKeys.filter(k => !prev.includes(k))]);
-    }
-  }, [groupedMarkups]);
-
-  const toggleAuthor = (id: string) => setFilterExpandedAuthors(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleDate = (id: string) => setFilterExpandedDates(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-
-  const authors = useMemo(() => {
-    const set = new Map();
-    (markups || []).forEach(m => { if (m.authorId) set.set(m.authorId, m.author?.name || m.author?.email || 'Unknown'); });
-    return Array.from(set.entries()).map(([id, name]) => ({ id, name }));
-  }, [markups]);
-
-  const handleExportCsv = () => {
-    const headers = ['Type', 'Subject', 'Comment', 'Author', 'Page', 'Status', 'Created'];
-    const rows = filteredMarkups.map(m => [
-      m.type,
-      m.properties?.subject || '',
-      m.properties?.comment || '',
-      m.author?.name || m.author?.email || '',
-      (m.pageNumber || 0) + 1,
-      m.properties?.status || 'open',
-      m.createdAt ? dayjs(m.createdAt).format('YYYY-MM-DD HH:mm') : '',
-    ]);
-    const csv = [headers, ...rows].map(row => row.map((v: any) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'markups.csv'; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  };
-
-  const inputSx = { width: '100%', padding: '7px 10px', borderRadius: '6px', border: `1px solid ${theme.palette.divider}`, background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)', color: theme.palette.text.primary, fontSize: '0.78rem', outline: 'none', transition: 'border-color 0.15s' };
-  const selectSx = {
-    height: 32, fontSize: '0.75rem', width: '100%',
+  // MUI Select style matching MarkupTable's selectSx (divider border, 30px height, 0.82rem)
+  const searchSelectSx = {
+    height: 30, fontSize: '0.82rem',
     '.MuiOutlinedInput-notchedOutline': { borderColor: theme.palette.divider },
     '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: alpha(gold, 0.5) },
     '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: gold },
     bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-    color: theme.palette.text.primary,
-    '& .MuiSelect-select': { color: theme.palette.text.primary },
+    '& .MuiSelect-select': { py: '5px !important', fontSize: '0.82rem', pr: '26px !important' },
+    '& .MuiSvgIcon-root': { fontSize: '1.1rem' },
   };
-
-  // Themed menu props for all dropdowns — prevents white-on-white in dark/light
-  const styledMenuProps = {
+  const searchMenuProps = {
     PaperProps: {
       sx: {
-        bgcolor: 'background.paper',
-        border: 1,
-        borderColor: 'divider',
+        bgcolor: 'background.paper', border: 1, borderColor: 'divider',
         boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-        '& .MuiMenuItem-root': {
-          fontSize: '0.75rem', borderRadius: '4px', mx: 0.5, my: 0.25,
-          color: 'text.primary',
-          '&:hover': { bgcolor: alpha(gold, 0.08) },
-          '&.Mui-selected': { bgcolor: alpha(gold, 0.12), color: gold, fontWeight: 600 }
-        }
-      }
-    }
+        '& .MuiMenuItem-root': { fontSize: '0.82rem', py: 0.5, borderRadius: '3px', mx: 0.3, '&:hover': { bgcolor: alpha(gold, 0.08) } },
+      },
+    },
   };
 
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -320,164 +280,101 @@ const PdfSidebar = memo(function PdfSidebar({
         </Tabs>
       </Box>
 
-      <Box sx={{ flexGrow: 1, overflowY: 'auto', ...getScrollbarSx(theme) }}>
+      <Box sx={{ flexGrow: 1, overflowY: tab === 2 ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column', ...getScrollbarSx(theme) }}>
         {tab === 0 && (
           <Box sx={{ p: 0 }}>
-            {pdfData ? (
-              <Document file={pdfData}>
-                {Array.from(new Array(numPages), (_, i) => {
-                  const pageNum = i + 1, isActive = currentPage === pageNum, label = pageLabels[i] || `Sheet ${pageNum}`;
-                  return <LazyPageThumbnail key={i} pageNum={pageNum} isActive={isActive} gold={gold} jumpToPage={jumpToPage} label={label} />;
-                })}
-              </Document>
+            {documentId && token ? (
+              <Box>
+                {(() => {
+                  // Build a sequential list of leaf bookmark titles as a fallback
+                  // when pageLabels hasn't been resolved yet (e.g. pdfjs still loading).
+                  // Only leaf nodes (no children) are real sheet names like "A101".
+                  // Parent containers like "Sheets" are skipped entirely.
+                  const leafTitles: string[] = [];
+                  const collectLeaves = (items: any[]) => {
+                    for (const item of items) {
+                      if (item.items?.length) { collectLeaves(item.items); }
+                      else if (item.title) { leafTitles.push(item.title); }
+                    }
+                  };
+                  if (bookmarks?.length) collectLeaves(bookmarks);
+
+                  return Array.from(new Array(numPages), (_, i) => {
+                    const pageNum = i + 1, isActive = currentPage === pageNum;
+                    const rawLabel = pageLabels[i];
+                    // Priority:
+                    // 1) pageLabels[i] — resolved by pdfjs outline (most accurate, set async)
+                    // 2) leafTitles[i]  — sequential leaf bookmark names as fast fallback
+                    // 3) "Page N"       — last resort
+                    let label: string;
+                    if (rawLabel && rawLabel !== String(pageNum) && rawLabel.trim() !== '') {
+                      label = rawLabel;
+                    } else if (leafTitles[i]) {
+                      label = leafTitles[i];
+                    } else {
+                      label = `Page ${pageNum}`;
+                    }
+                    return <LazyPageThumbnail key={i} pageNum={pageNum} isActive={isActive} gold={gold} jumpToPage={jumpToPage} label={label} documentId={documentId} token={token} pdfFileUrl={pdfData} />;
+                  });
+                })()}
+              </Box>
             ) : <Box display="flex" justifyContent="center" p={4}><CircularProgress size={24} /></Box>}
           </Box>
         )}
 
         {tab === 1 && (
           <List>
-            {bookmarks.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>{t('noBookmarks', 'No bookmarks found.')}</Typography> : bookmarks.map((item, i) => <BookmarkItem key={i} item={item} onJump={(dest) => onJumpToBookmark?.(dest)} isActive={false} currentPage={currentPage} />)}
+            {bookmarks.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>{t('noBookmarks', 'No bookmarks found.')}</Typography> : bookmarks.map((item, i) => <BookmarkItem key={i} item={item} onJump={(dest) => onJumpToBookmark?.(dest)} currentPage={currentPage || 1} pageLabels={pageLabels || []} />)}
           </List>
         )}
 
         {tab === 2 && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Select size="small" value={filterAuthor} onChange={(e) => setFilterAuthor(e.target.value)} sx={{ ...selectSx, flex: 1 }} MenuProps={styledMenuProps}>
-                  <MenuItem value="all" sx={{ fontSize: '0.75rem' }}>{t('allAuthors', 'All Users')}</MenuItem>
-                  {authors.map(a => <MenuItem key={a.id} value={a.id} sx={{ fontSize: '0.75rem' }}>{a.name}</MenuItem>)}
-                </Select>
-                <Tooltip title={t('batchSelect', 'Batch select')}>
-                  <IconButton size="small" onClick={() => { setBatchMode(b => !b); if (batchMode) onMarkupSelect([]); }}
-                    sx={{ flexShrink: 0, borderRadius: '6px', bgcolor: batchMode ? alpha(gold, 0.15) : 'transparent', color: batchMode ? gold : 'text.secondary', '&:hover': { bgcolor: alpha(gold, 0.08), color: gold } }}>
-                    <CheckBoxOutlineBlankIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={t('exportCsv', 'Export CSV')}>
-                  <IconButton size="small" onClick={handleExportCsv} sx={{ flexShrink: 0, borderRadius: '6px', color: 'text.secondary', '&:hover': { bgcolor: alpha(gold, 0.08), color: gold } }}>
-                    <FileDownloadIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Tooltip>
-              </Box>
-              <Select size="small" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={selectSx} MenuProps={styledMenuProps}
-                renderValue={(val) => val === 'all' ? <span style={{ fontSize: '0.75rem' }}>{t('allStatuses', 'All Statuses')}</span> : (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: STATUS_COLORS[val as string] }} />
-                    <span style={{ fontSize: '0.75rem' }}>{STATUS_LABELS[val as string]}</span>
-                  </Box>
-                )}
-              >
-                <MenuItem value="all" sx={{ fontSize: '0.75rem' }}>{t('allStatuses', 'All Statuses')}</MenuItem>
-                {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                  <MenuItem key={key} value={key} sx={{ fontSize: '0.75rem' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: STATUS_COLORS[key] }} />
-                      {label}
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-              <input placeholder={t('filterMarkups', 'Filter markups...')} value={filterText} onChange={(e) => setFilterText(e.target.value)} style={inputSx} />
-              {/* Date range toggle + inputs */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <Box component="button" onClick={() => setShowDateFilter(s => !s)}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.62rem', fontWeight: 600, color: (filterDateFrom || filterDateTo) ? gold : 'text.secondary', border: 'none', background: 'none', cursor: 'pointer', p: 0, '&:hover': { color: gold } }}>
-                  <CalendarTodayIcon sx={{ fontSize: 11 }} />
-                  {(filterDateFrom || filterDateTo) ? `${filterDateFrom || '…'} — ${filterDateTo || '…'}` : t('dateRange', 'Date range')}
-                </Box>
-                {(filterDateFrom || filterDateTo) && (
-                  <IconButton size="small" sx={{ p: 0.2, opacity: 0.5 }} onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); }}>
-                    <ClearIcon sx={{ fontSize: 11 }} />
-                  </IconButton>
-                )}
-              </Box>
-              {showDateFilter && (
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-                    style={{ ...inputSx, flex: 1, fontSize: '0.65rem', padding: '5px 6px' }} />
-                  <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
-                    style={{ ...inputSx, flex: 1, fontSize: '0.65rem', padding: '5px 6px' }} />
-                </Box>
-              )}
-            </Box>
-            <List sx={{ flexGrow: 1, ...getScrollbarSx(theme) }}>
-              {groupedMarkups.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>{t('noMarkups', 'No markups found.')}</Typography> : groupedMarkups.map(author => (
-                <Box key={author.id}>
-                  <ListItemButton onClick={() => toggleAuthor(author.id)} sx={{ bgcolor: 'action.hover' }}>
-                    <ListItemIcon sx={{ minWidth: 24 }}>{expandedAuthors.includes(author.id) ? <ExpandMoreIcon sx={{ fontSize: 16 }} /> : <ChevronRightIcon sx={{ fontSize: 16 }} />}</ListItemIcon>
-                    <PersonIcon sx={{ fontSize: 14, mr: 1, color: gold }} />
-                    <ListItemText primary={author.name} primaryTypographyProps={{ fontSize: '0.75rem', fontWeight: 700 }} />
-                    {isAdmin && <IconButton size="small" onClick={(e) => { e.stopPropagation(); if(onDeleteMarkup) onDeleteMarkup(Array.from(author.dates.values()).flat().map((m: any) => m.id)); }} sx={{ opacity: 0.5, '&:hover': { opacity: 1, color: 'error.main' } }}><DeleteIcon sx={{ fontSize: 14 }} /></IconButton>}
-                  </ListItemButton>
-                  <Collapse in={expandedAuthors.includes(author.id)} timeout="auto">
-                    {Array.from(author.dates.entries()).map(([date, items]: any) => (
-                      <Box key={date}>
-                        <ListItemButton onClick={() => toggleDate(`${author.id}-${date}`)} sx={{ pl: 4, bgcolor: 'action.hover', opacity: 0.9 }}>
-                          <ListItemIcon sx={{ minWidth: 24 }}>{expandedDates.includes(`${author.id}-${date}`) ? <ExpandMoreIcon sx={{ fontSize: 14 }} /> : <ChevronRightIcon sx={{ fontSize: 14 }} />}</ListItemIcon>
-                          <CalendarTodayIcon sx={{ fontSize: 12, mr: 1, opacity: 0.6 }} />
-                          <ListItemText primary={formatGroupDate(date)} primaryTypographyProps={{ fontSize: '0.7rem', fontWeight: 600 }} />
-                          <Typography variant="caption" sx={{ opacity: 0.5, mr: 1 }}>{items.length}</Typography>
-                          {isAdmin && <IconButton size="small" onClick={(e) => { e.stopPropagation(); if(onDeleteMarkup) onDeleteMarkup(items.map((m: any) => m.id)); }} sx={{ opacity: 0.5, '&:hover': { opacity: 1, color: 'error.main' } }}><DeleteIcon sx={{ fontSize: 14 }} /></IconButton>}
-                        </ListItemButton>
-                        <Collapse in={expandedDates.includes(`${author.id}-${date}`)} timeout="auto">
-                          <Box sx={{ pl: 2 }}>{items.map((m: any) => {
-  const canDelete = isAdmin || (currentUserId != null && m.authorId === currentUserId);
-  const isChecked = selectedMarkupIds.includes(m.id);
-  const handleSelect = () => {
-    if (batchMode) {
-      // Toggle in/out of multi-selection
-      const next = isChecked ? selectedMarkupIds.filter(id => id !== m.id) : [...selectedMarkupIds, m.id];
-      onMarkupSelect(next);
-    } else {
-      onMarkupSelect([m.id]);
-    }
-  };
-  return <MarkupListItem key={m.id} markup={m} selected={isChecked} onSelect={handleSelect} onOpen={() => !batchMode && onMarkupOpen?.([m.id])} onDelete={() => onDeleteMarkup?.(m.id)} canDelete={canDelete} batchMode={batchMode} />;
-})}</Box>
-                        </Collapse>
-                      </Box>
-                    ))}
-                  </Collapse>
-                </Box>
-              ))}
-            </List>
-            {/* Bulk action bar — shows when in batch mode with items selected */}
-            {batchMode && selectedMarkupIds.length > 0 && (
-              <Box sx={{ borderTop: 1, borderColor: 'divider', p: 1.5, bgcolor: alpha(gold, 0.05), display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Chip label={`${selectedMarkupIds.length} selected`} size="small" sx={{ fontSize: '0.65rem', height: 20, bgcolor: alpha(gold, 0.15), color: gold, fontWeight: 700 }} />
-                  <Button size="small" sx={{ fontSize: '0.62rem', color: 'text.secondary', textTransform: 'none', minWidth: 0, p: 0.5 }}
-                    onClick={() => onMarkupSelect([])}>
-                    {t('clearSelection', 'Clear')}
-                  </Button>
-                </Box>
-                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
-                  {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                    <Chip key={key} label={label} size="small" clickable
-                      sx={{ fontSize: '0.6rem', height: 20, border: `1px solid ${STATUS_COLORS[key]}`, bgcolor: alpha(STATUS_COLORS[key], 0.08), color: STATUS_COLORS[key], fontWeight: 600, '&:hover': { bgcolor: alpha(STATUS_COLORS[key], 0.2) } }}
-                      onClick={() => onBulkUpdateProperty?.(selectedMarkupIds, 'status', key)}
-                    />
-                  ))}
-                </Box>
-                <Button size="small" variant="contained" color="error" startIcon={<DeleteIcon sx={{ fontSize: 14 }} />}
-                  sx={{ fontSize: '0.65rem', textTransform: 'none', py: 0.5 }}
-                  onClick={() => { onDeleteMarkup?.(selectedMarkupIds); onMarkupSelect([]); setBatchMode(false); }}>
-                  {t('deleteSelected', 'Delete selected')} ({selectedMarkupIds.length})
-                </Button>
-              </Box>
-            )}
-          </Box>
+          <MarkupTable
+            markups={markups}
+            selectedMarkupIds={selectedMarkupIds}
+            onMarkupSelect={onMarkupSelect}
+            onMarkupOpen={onMarkupOpen}
+            onDeleteMarkup={onDeleteMarkup}
+            hiddenLayers={hiddenLayers}
+            currentUserId={currentUserId}
+            isAdmin={isAdmin}
+            onBulkUpdateProperty={onBulkUpdateProperty}
+          />
         )}
 
         {tab === 3 && (
           <Box sx={{ p: 1.5 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>{t('markupLayers', 'Markup Layers')}</Typography>
+            {/* PDF OCG Layers (from overlay/comparison PDFs or Bluebeam) */}
+            {pdfLayers.length > 0 && (
+              <>
+                <Typography sx={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: gold, mb: 1 }}>
+                  PDF Layers
+                </Typography>
+                <List sx={{ mb: 1.5 }}>
+                  {pdfLayers.map(layer => (
+                    <ListItemButton key={layer.name} onClick={() => onTogglePdfLayer?.(layer.name)}
+                      sx={{ borderRadius: 1, mb: 0.5, py: 0.5, bgcolor: layer.visible ? alpha(gold, 0.08) : 'transparent', justifyContent: 'space-between', '&:hover': { bgcolor: layer.visible ? alpha(gold, 0.15) : theme.palette.action.hover } }}>
+                      <ListItemText primary={layer.name}
+                        primaryTypographyProps={{ fontSize: '0.85rem', color: layer.visible ? 'text.primary' : 'text.disabled', fontWeight: layer.visible ? 600 : 400 }} />
+                      <ListItemIcon sx={{ minWidth: 0 }}>
+                        {layer.visible ? <VisibilityIcon sx={{ fontSize: 18, color: gold }} /> : <VisibilityOffIcon sx={{ fontSize: 18, opacity: 0.4 }} />}
+                      </ListItemIcon>
+                    </ListItemButton>
+                  ))}
+                </List>
+                <Divider sx={{ mb: 1.5 }} />
+              </>
+            )}
+
+            {/* Markup Layers */}
+            <Typography sx={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'text.secondary', mb: 1 }}>
+              {t('markupLayers', 'Markup Layers')}
+            </Typography>
             <List>
               {Array.from(new Set((markups || []).map(m => m.type))).map((type: any) => {
                 const isHidden = hiddenLayers.includes(type);
                 return (
-                  <ListItemButton key={type} onClick={() => onToggleLayer?.(type)} sx={{ borderRadius: 1, mb: 0.5, bgcolor: isHidden ? 'transparent' : alpha(gold, 0.08), justifyContent: 'space-between', '&:hover': { bgcolor: isHidden ? theme.palette.action.hover : alpha(gold, 0.15) } }}>
+                  <ListItemButton key={type} onClick={() => onToggleLayer?.(type)} sx={{ borderRadius: 1, mb: 0.5, py: 0.5, bgcolor: isHidden ? 'transparent' : alpha(gold, 0.08), justifyContent: 'space-between', '&:hover': { bgcolor: isHidden ? theme.palette.action.hover : alpha(gold, 0.15) } }}>
                     <ListItemText primary={type} primaryTypographyProps={{ fontSize: '0.85rem', color: isHidden ? 'text.secondary' : 'text.primary', fontWeight: isHidden ? 400 : 600 }} />
                     <ListItemIcon sx={{ minWidth: 0 }}>{isHidden ? <VisibilityOffIcon sx={{ fontSize: 18, opacity: 0.5 }} /> : <VisibilityIcon sx={{ fontSize: 18, color: gold }} />}</ListItemIcon>
                   </ListItemButton>
@@ -487,55 +384,171 @@ const PdfSidebar = memo(function PdfSidebar({
           </Box>
         )}
 
-        {tab === 4 && (
+        {tab === 4 && (() => {
+          // Group search results by page for collapsible display
+          const groupByPage = searchGroupBy === 'page';
+          const sortedResults = searchSortBy === 'page'
+            ? [...searchResults].sort((a, b) => a.pageIndex - b.pageIndex)
+            : searchResults; // default = order found
+          const pageGroups = groupByPage
+            ? sortedResults.reduce((acc, res, origIdx) => {
+                // Find the REAL index in original searchResults for navigation
+                const realIdx = searchResults.indexOf(res);
+                const pg = res.pageIndex;
+                if (!acc.has(pg)) acc.set(pg, []);
+                acc.get(pg)!.push({ ...res, _realIdx: realIdx });
+                return acc;
+              }, new Map<number, any[]>())
+            : null;
+
+          // Filter by type
+          const filteredResults = searchFilterType === 'all'
+            ? sortedResults
+            : searchFilterType === 'text'
+            ? sortedResults.filter(r => !(r as any).markupId)
+            : sortedResults.filter(r => !!(r as any).markupId);
+
+          const filteredGroups = groupByPage && pageGroups
+            ? new Map([...pageGroups].filter(([, items]) =>
+                items.some(r => searchFilterType === 'all' || (searchFilterType === 'text' ? !r.markupId : !!r.markupId))
+              ).map(([pg, items]) => [pg, items.filter(r =>
+                searchFilterType === 'all' || (searchFilterType === 'text' ? !r.markupId : !!r.markupId)
+              )]))
+            : null;
+
+          const activeIdx = activeSearchResultIndex ?? -1;
+          const navResults = searchFilterType === 'all' ? sortedResults : filteredResults;
+          const navRealIndices = navResults.map(r => searchResults.indexOf(r));
+
+          const goNext = () => {
+            const curPos = navRealIndices.indexOf(activeIdx);
+            const next = curPos < navRealIndices.length - 1 ? navRealIndices[curPos + 1] : navRealIndices[0];
+            onSearchResultSelect?.(next);
+          };
+          const goPrev = () => {
+            const curPos = navRealIndices.indexOf(activeIdx);
+            const prev = curPos > 0 ? navRealIndices[curPos - 1] : navRealIndices[navRealIndices.length - 1];
+            onSearchResultSelect?.(prev);
+          };
+          const activePos = navRealIndices.indexOf(activeIdx);
+
+          return (
           <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-              <RadioGroup row value={searchScope} onChange={(e) => onSearchScopeChange?.(e.target.value as any)} sx={{ mb: 1.5, justifyContent: 'center', bgcolor: alpha(gold, 0.05), borderRadius: '8px', p: 0.5 }}>
-                <FormControlLabel value="document" control={<Radio size="small" sx={{ color: gold, '&.Mui-checked': { color: gold }, p: 0.5 }} />} label={<Typography variant="caption" sx={{ fontSize: '0.65rem', fontWeight: 700 }}>{t('allPages', 'ALL SHEETS')}</Typography>} />
-                <FormControlLabel value="page" control={<Radio size="small" sx={{ color: gold, '&.Mui-checked': { color: gold }, p: 0.5 }} />} label={<Typography variant="caption" sx={{ fontSize: '0.65rem', fontWeight: 700 }}>{t('currentPage', 'CURRENT')}</Typography>} />
+            {/* Search input */}
+            <Box sx={{ p: 1.5, pb: 1, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <RadioGroup row value={searchScope} onChange={(e) => onSearchScopeChange?.(e.target.value as any)} sx={{ justifyContent: 'center', bgcolor: alpha(gold, 0.05), borderRadius: '8px', p: 0.5 }}>
+                <FormControlLabel value="document" control={<Radio size="small" sx={{ color: gold, '&.Mui-checked': { color: gold }, p: 0.5 }} />} label={<Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 700 }}>{t('allPages', 'ALL SHEETS')}</Typography>} />
+                <FormControlLabel value="page" control={<Radio size="small" sx={{ color: gold, '&.Mui-checked': { color: gold }, p: 0.5 }} />} label={<Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 700 }}>{t('currentPage', 'CURRENT')}</Typography>} />
               </RadioGroup>
               <Box sx={{ position: 'relative', display: 'flex', gap: 1 }}>
                 <input placeholder={t('searchDocument', 'Search document...')} value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onSearch?.(searchKeyword); }} style={{ ...inputSx, paddingRight: '30px' }} />
                 {searchKeyword && <IconButton size="small" onClick={onResetSearch} sx={{ position: 'absolute', right: 40, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }}><ClearIcon sx={{ fontSize: 14 }} /></IconButton>}
                 <IconButton onClick={() => onSearch?.(searchKeyword)} size="small" sx={{ bgcolor: alpha(gold, 0.1), color: gold, '&:hover': { bgcolor: alpha(gold, 0.2) } }}><SearchIcon fontSize="small" /></IconButton>
               </Box>
-              {isSearching && <Box sx={{ mt: 2 }}><LinearProgress variant="determinate" value={searchProgress} /><Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block", textAlign: "center" }}>{t('searching', 'Searching...')} {searchProgress}%</Typography></Box>}
+              {isSearching && <Box><LinearProgress variant="determinate" value={searchProgress} /><Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block", textAlign: "center" }}>{t('searching', 'Searching...')} {searchProgress}%</Typography></Box>}
             </Box>
+
+            {/* Results toolbar: count + prev/next + group/sort/filter + highlight */}
             {searchResults.length > 0 && !isSearching && (
-              <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', flexGrow: 1 }}>
-                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
-                </Typography>
-                <Tooltip title="Pick highlight color">
-                  <Box sx={{ position: 'relative', width: 20, height: 20, flexShrink: 0 }}>
-                    <Box sx={{ width: 20, height: 20, borderRadius: '50%', bgcolor: highlightAllColor, border: '2px solid', borderColor: 'divider', cursor: 'pointer' }} />
-                    <input type="color" value={highlightAllColor} onChange={e => setHighlightAllColor(e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
+              <Box sx={{ px: 1.5, py: 0.75, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                {/* Row 1: count + prev/next arrows */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary', fontWeight: 500, flex: 1 }}>
+                    {activePos >= 0 ? `${activePos + 1} / ` : ''}{navResults.length} result{navResults.length !== 1 ? 's' : ''}
+                  </Typography>
+                  <IconButton size="small" onClick={goPrev} sx={{ p: 0.3, color: 'text.secondary' }}>
+                    <Box component="span" sx={{ fontSize: '0.9rem', lineHeight: 1 }}>▲</Box>
+                  </IconButton>
+                  <IconButton size="small" onClick={goNext} sx={{ p: 0.3, color: 'text.secondary' }}>
+                    <Box component="span" sx={{ fontSize: '0.9rem', lineHeight: 1 }}>▼</Box>
+                  </IconButton>
+                  <Tooltip title="Pick highlight color">
+                    <Box sx={{ position: 'relative', width: 18, height: 18, flexShrink: 0 }}>
+                      <Box sx={{ width: 18, height: 18, borderRadius: '50%', bgcolor: highlightAllColor, border: '2px solid', borderColor: 'divider', cursor: 'pointer' }} />
+                      <input type="color" value={highlightAllColor} onChange={e => setHighlightAllColor(e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
+                    </Box>
+                  </Tooltip>
+                  <Box component="button" onClick={() => onHighlightAll?.(highlightAllColor)}
+                    sx={{ fontSize: '0.68rem', fontWeight: 700, px: 0.75, py: 0.4, bgcolor: alpha(gold, 0.15), color: gold, border: '1px solid', borderColor: alpha(gold, 0.3), borderRadius: '4px', cursor: 'pointer', '&:hover': { bgcolor: alpha(gold, 0.25) } }}>
+                    HIGHLIGHT
                   </Box>
-                </Tooltip>
-                <Box
-                  component="button"
-                  onClick={() => onHighlightAll?.(highlightAllColor)}
-                  sx={{ fontSize: '0.6rem', fontWeight: 700, px: 1, py: 0.5, bgcolor: alpha(gold, 0.15), color: gold, border: '1px solid', borderColor: alpha(gold, 0.3), borderRadius: '4px', cursor: 'pointer', '&:hover': { bgcolor: alpha(gold, 0.25) } }}
-                >
-                  HIGHLIGHT ALL
+                </Box>
+                {/* Row 2: group + filter + sort — MUI Selects matching Markups style */}
+                <Box sx={{ display: 'flex', gap: 0.75 }}>
+                  <Select size="small" value={searchGroupBy} onChange={e => setSearchGroupBy(e.target.value as any)}
+                    sx={{ ...searchSelectSx, flex: 1, minWidth: 0 }} MenuProps={searchMenuProps}>
+                    <MenuItem value="none">No grouping</MenuItem>
+                    <MenuItem value="page">By page</MenuItem>
+                  </Select>
+                  <Select size="small" value={searchFilterType} onChange={e => setSearchFilterType(e.target.value as any)}
+                    sx={{ ...searchSelectSx, flex: 1, minWidth: 0 }} MenuProps={searchMenuProps}>
+                    <MenuItem value="all">All types</MenuItem>
+                    <MenuItem value="text">Text only</MenuItem>
+                    <MenuItem value="markup">Markups</MenuItem>
+                  </Select>
+                  <Select size="small" value={searchSortBy} onChange={e => setSearchSortBy(e.target.value as any)}
+                    sx={{ ...searchSelectSx, flex: 1, minWidth: 0 }} MenuProps={searchMenuProps}>
+                    <MenuItem value="found">Found order</MenuItem>
+                    <MenuItem value="page">By page</MenuItem>
+                  </Select>
                 </Box>
               </Box>
             )}
-            <List sx={{ flexGrow: 1, ...getScrollbarSx(theme) }}>
-              {searchResults.map((res, idx) => {
-                const isSelected = activeSearchResultIndex === idx;
-                const isMarkup = !!(res as any).markupId;
-                return (
-                  <ListItemButton key={idx} onClick={() => onSearchResultSelect?.(idx)} sx={{ borderBottom: 1, borderColor: 'divider', flexDirection: 'column', alignItems: 'flex-start', bgcolor: isSelected ? alpha(gold, 0.12) : 'transparent', '&:hover': { bgcolor: isSelected ? alpha(gold, 0.18) : alpha(theme.palette.action.hover, 0.5) } }}>
-                    <Typography variant="caption" sx={{ color: isMarkup ? 'secondary.main' : gold, fontWeight: 800, fontSize: '0.6rem', mb: 0.5 }}>{isMarkup ? 'MARKUP' : `PAGE ${res.pageIndex + 1}`}</Typography>
-                    <Typography variant="body2" sx={{ fontSize: '0.78rem', wordBreak: 'break-word', color: isSelected ? 'text.primary' : 'text.secondary', lineHeight: 1.4 }}>{res.before}<span style={{ backgroundColor: 'rgba(66, 133, 244, 0.3)', fontWeight: 600, padding: '0 2px', borderRadius: '2px', textDecoration: 'underline', textDecorationColor: 'rgba(66, 133, 244, 0.8)' }}>{searchKeyword}</span>{res.after}</Typography>
-                  </ListItemButton>
-                );
-              })}
+
+            {/* Results list — grouped or flat */}
+            <Box sx={{ flexGrow: 1, overflowY: 'auto', ...getScrollbarSx(theme) }}>
+              {groupByPage && filteredGroups ? (
+                [...filteredGroups].map(([pageIdx, items]) => (
+                  <Box key={pageIdx}>
+                    <Box sx={{ px: 1.5, py: '5px', bgcolor: isDark ? alpha(gold, 0.07) : alpha(gold, 0.05), borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, color: gold, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        {pageLabels?.[pageIdx] || `Page ${pageIdx + 1}`}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary' }}>{items.length}</Typography>
+                    </Box>
+                    {items.map((res: any) => {
+                      const realIdx = res._realIdx;
+                      const isSelected = activeSearchResultIndex === realIdx;
+                      const isMarkup = !!res.markupId;
+                      return (
+                        <Box key={realIdx} onClick={() => onSearchResultSelect?.(realIdx)}
+                          sx={{ px: 1.5, py: 0.75, cursor: 'pointer', borderBottom: `1px solid ${alpha(theme.palette.divider, 0.3)}`,
+                            bgcolor: isSelected ? alpha(gold, 0.12) : 'transparent',
+                            '&:hover': { bgcolor: isSelected ? alpha(gold, 0.18) : 'rgba(255,255,255,0.03)' } }}>
+                          {isMarkup && <Typography sx={{ fontSize: '0.65rem', fontWeight: 800, color: 'secondary.main', mb: 0.3 }}>MARKUP</Typography>}
+                          <Typography sx={{ fontSize: '0.82rem', wordBreak: 'break-word', color: isSelected ? 'text.primary' : 'text.secondary', lineHeight: 1.4 }}>
+                            {res.before}<span style={{ backgroundColor: 'rgba(66,133,244,0.3)', fontWeight: 600, padding: '0 2px', borderRadius: 2, textDecoration: 'underline', textDecorationColor: 'rgba(66,133,244,0.8)' }}>{searchKeyword}</span>{res.after}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                ))
+              ) : (
+                (searchFilterType === 'all' ? sortedResults : filteredResults).map((res, i) => {
+                  const realIdx = searchResults.indexOf(res);
+                  const isSelected = activeSearchResultIndex === realIdx;
+                  const isMarkup = !!(res as any).markupId;
+                  return (
+                    <Box key={realIdx} onClick={() => onSearchResultSelect?.(realIdx)}
+                      sx={{ px: 1.5, py: 0.75, cursor: 'pointer', borderBottom: `1px solid ${alpha(theme.palette.divider, 0.3)}`,
+                        bgcolor: isSelected ? alpha(gold, 0.12) : 'transparent',
+                        '&:hover': { bgcolor: isSelected ? alpha(gold, 0.18) : 'rgba(255,255,255,0.03)' } }}>
+                      <Typography sx={{ fontSize: '0.65rem', fontWeight: 800, color: isMarkup ? 'secondary.main' : gold, mb: 0.3 }}>
+                        {isMarkup ? 'MARKUP' : `PAGE ${res.pageIndex + 1}`}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.82rem', wordBreak: 'break-word', color: isSelected ? 'text.primary' : 'text.secondary', lineHeight: 1.4 }}>
+                        {res.before}<span style={{ backgroundColor: 'rgba(66,133,244,0.3)', fontWeight: 600, padding: '0 2px', borderRadius: 2, textDecoration: 'underline', textDecorationColor: 'rgba(66,133,244,0.8)' }}>{searchKeyword}</span>{res.after}
+                      </Typography>
+                    </Box>
+                  );
+                })
+              )}
               {!isSearching && searchResults.length === 0 && searchKeyword && <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>{t('noResults', 'No results found.')}</Typography>}
-            </List>
+            </Box>
           </Box>
-        )}
+          );
+        })()}
       </Box>
     </Box>
   );

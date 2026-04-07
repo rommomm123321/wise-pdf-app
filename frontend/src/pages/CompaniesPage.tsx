@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
   Typography,
@@ -30,6 +30,10 @@ import {
   Tabs,
   Tab,
   Menu,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  Pagination,
 } from "@mui/material";
 import toast from "react-hot-toast";
 import BusinessIcon from "@mui/icons-material/Business";
@@ -62,9 +66,11 @@ import SecurityIcon from "@mui/icons-material/Security";
 import LocalOfferIcon from "@mui/icons-material/LocalOffer";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
+import RestoreIcon from "@mui/icons-material/Restore";
 import AddIcon from "@mui/icons-material/Add";
 import SearchIcon from "@mui/icons-material/Search";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
+import SettingsIcon from "@mui/icons-material/Settings";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../lib/api";
 import { useTranslation } from "react-i18next";
@@ -78,6 +84,7 @@ import { useAuth } from "../contexts/AuthContext";
 import RenameDialog from "../components/filemanager/RenameDialog";
 import ConfirmDialog from "../components/filemanager/ConfirmDialog";
 import { MOBILE_BREAKPOINT, MOBILE_BREAKPOINT_PX } from "../constants";
+import OneDriveConnect from "../components/company/OneDriveConnect";
 
 const COMPANY_ICONS = [
   BusinessIcon,
@@ -293,6 +300,7 @@ function CompanyMobileCard({
   visibleCols,
   onRename,
   onDelete,
+  onSettings,
   isAdmin,
 }: any) {
   const { Icon, color } = getCompanyVisuals(company.id);
@@ -381,6 +389,15 @@ function CompanyMobileCard({
         <MenuItem
           onClick={() => {
             handleMenuClose();
+            onSettings(company);
+          }}
+        >
+          <SettingsIcon fontSize="small" sx={{ mr: 1.5 }} />
+          {t("settings", "Settings")}
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            handleMenuClose();
             onRename(company);
           }}
         >
@@ -407,11 +424,11 @@ export default function CompaniesPage() {
   const queryClient = useQueryClient();
   const isMobile = useMediaQuery(`(max-width:${MOBILE_BREAKPOINT_PX})`);
   const isExtraSmall = useMediaQuery("(max-width:480px)");
-  const { data: companies = [], isLoading } = useCompanyStats();
-
   const { preferences, updatePreferences } = useUserPreferences();
   const [visibleCols, setVisibleCols] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("date");
   type ViewMode = "grid" | "list";
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -422,6 +439,28 @@ export default function CompaniesPage() {
   const { user } = useAuth();
   const isAdmin = user?.systemRole === "GENERAL_ADMIN";
   const [tab, setTab] = useState(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1); // Reset to first page on search
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const { data: statsData, isLoading } = useCompanyStats(page, 20, debouncedSearch);
+  const companies = statsData?.data || [];
+  const pagination = statsData?.pagination;
+
+  // Table row context menu
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [menuCompany, setMenuCompany] = useState<any | null>(null);
+  const handleTableMenuOpen = (e: React.MouseEvent<HTMLElement>, company: any) => {
+    e.stopPropagation();
+    setMenuAnchor(e.currentTarget);
+    setMenuCompany(company);
+  };
+  const handleTableMenuClose = () => { setMenuAnchor(null); setMenuCompany(null); };
 
   // Create Company state
   const [openCompanyDialog, setOpenCompanyDialog] = useState(false);
@@ -435,6 +474,33 @@ export default function CompaniesPage() {
     id: string;
     name: string;
   } | null>(null);
+  const [restoreCompany, setRestoreCompany] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+
+  // Company settings (OneDrive) dialog
+  const [settingsCompany, setSettingsCompany] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+
+  // Handle OAuth callback from OneDrive (redirects back to /companies)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const onedriveParam = params.get('onedrive');
+    if (onedriveParam === 'authed') {
+      const cId = params.get('companyId');
+      if (cId) {
+        const match = companies.find((c: any) => c.id === cId);
+        setSettingsCompany({ id: cId, name: match?.name || '' });
+      }
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (onedriveParam === 'error') {
+      toast.error(params.get('message') || 'OneDrive authentication failed');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [companies]);
 
   useEffect(() => {
     const requiredKeys = COMPANIES_COLUMNS.filter((c) => c.required).map(
@@ -511,6 +577,17 @@ export default function CompaniesPage() {
     onError: (err: any) => toast.error(err.message || t("errorArchiveCompany")),
   });
 
+  const restoreCompanyMut = useMutation({
+    mutationFn: (id: string) =>
+      apiFetch(`/api/companies/${id}/restore`, { method: "POST" }),
+    onSuccess: () => {
+      setRestoreCompany(null);
+      invalidateAll();
+      toast.success(t("companyRestored", "Company restored successfully"));
+    },
+    onError: (err: any) => toast.error(err.message || t("errorRestoreCompany")),
+  });
+
   const processedCompanies = useMemo(() => {
     let result = companies.filter((c: any) =>
       tab === 0 ? !c.isArchived : c.isArchived,
@@ -561,7 +638,7 @@ export default function CompaniesPage() {
             fontWeight={500}
             sx={{ ml: 1, fontSize: "0.9em" }}
           >
-            ({processedCompanies.length})
+            ({pagination?.total ?? processedCompanies.length})
           </Typography>
         </Typography>
       </Box>
@@ -759,6 +836,7 @@ export default function CompaniesPage() {
                   visibleCols={visibleCols}
                   onRename={setRenameCompany}
                   onDelete={setDeleteCompany}
+                  onSettings={setSettingsCompany}
                   isAdmin={isAdmin}
                 />
               ))
@@ -929,36 +1007,12 @@ export default function CompaniesPage() {
                           />
                         </TableCell>
                       )}
-                      <TableCell align="right">
-                        <Box display="flex" justifyContent="flex-end" gap={0.5}>
-                          <Tooltip title={t("rename", "Rename")}>
-                            <IconButton
-                              size="small"
-                              onClick={() =>
-                                setRenameCompany({
-                                  id: company.id,
-                                  name: company.name,
-                                })
-                              }
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title={t("delete")}>
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={() =>
-                                setDeleteCompany({
-                                  id: company.id,
-                                  name: company.name,
-                                })
-                              }
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </Box>
+                      <TableCell align="right" sx={{ pr: 1 }}>
+                        {isAdmin && (
+                          <IconButton size="small" onClick={(e) => handleTableMenuOpen(e, company)}>
+                            <MoreVertIcon fontSize="small" />
+                          </IconButton>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))
@@ -968,6 +1022,20 @@ export default function CompaniesPage() {
           </TableContainer>
         )}
       </Box>
+
+      {pagination && (pagination.totalPages > 1 || pagination.total > 0) && (
+        <Box display="flex" flexDirection="column" alignItems="center" mt={3} mb={3} gap={1}>
+          {pagination.totalPages > 1 && (
+            <Pagination
+              count={pagination.totalPages}
+              page={page}
+              onChange={(_, p) => setPage(p)}
+              color="primary"
+              size={isMobile ? "small" : "medium"}
+            />
+          )}
+        </Box>
+      )}
 
       {/* Create Company Dialog */}
       <RenameDialog
@@ -982,6 +1050,35 @@ export default function CompaniesPage() {
       />
 
       {/* Rename Company Dialog */}
+      {/* Table row context menu */}
+      <Menu
+        anchorEl={menuAnchor}
+        open={Boolean(menuAnchor)}
+        onClose={handleTableMenuClose}
+        transformOrigin={{ horizontal: "right", vertical: "top" }}
+        anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
+      >
+        {!menuCompany?.isArchived && (
+          <MenuItem onClick={() => { handleTableMenuClose(); setSettingsCompany({ id: menuCompany?.id, name: menuCompany?.name }); }}>
+            <SettingsIcon fontSize="small" sx={{ mr: 1.5 }} /> {t("settings", "Settings")}
+          </MenuItem>
+        )}
+        {!menuCompany?.isArchived && (
+          <MenuItem onClick={() => { handleTableMenuClose(); setRenameCompany({ id: menuCompany?.id, name: menuCompany?.name }); }}>
+            <EditIcon fontSize="small" sx={{ mr: 1.5 }} /> {t("rename", "Rename")}
+          </MenuItem>
+        )}
+        {menuCompany?.isArchived ? (
+          <MenuItem onClick={() => { handleTableMenuClose(); setRestoreCompany({ id: menuCompany?.id, name: menuCompany?.name }); }} sx={{ color: "success.main" }}>
+            <RestoreIcon fontSize="small" sx={{ mr: 1.5, color: "success.main" }} /> {t("restore", "Restore")}
+          </MenuItem>
+        ) : (
+          <MenuItem onClick={() => { handleTableMenuClose(); setDeleteCompany({ id: menuCompany?.id, name: menuCompany?.name }); }} sx={{ color: "error.main" }}>
+            <DeleteIcon fontSize="small" sx={{ mr: 1.5, color: "error.main" }} /> {t("archive", "Archive")}
+          </MenuItem>
+        )}
+      </Menu>
+
       <RenameDialog
         open={!!renameCompany}
         onClose={() => setRenameCompany(null)}
@@ -1006,6 +1103,47 @@ export default function CompaniesPage() {
           deleteCompany && deleteCompanyMut.mutate(deleteCompany.id)
         }
       />
+
+      {/* Restore Company Dialog */}
+      <ConfirmDialog
+        open={!!restoreCompany}
+        onClose={() => setRestoreCompany(null)}
+        title={t("restoreCompany", "Restore Company")}
+        message={t(
+          "confirmRestoreCompanyMessage",
+          `Restore "${restoreCompany?.name}"? All projects and files will become accessible again.`,
+        )}
+        onConfirm={() =>
+          restoreCompany && restoreCompanyMut.mutate(restoreCompany.id)
+        }
+      />
+
+      {/* Company Settings Dialog (OneDrive integration) */}
+      <Dialog
+        open={!!settingsCompany}
+        onClose={() => setSettingsCompany(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          {t("companySettings", "Company Settings")}
+          {settingsCompany?.name ? ` — ${settingsCompany.name}` : ""}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="subtitle2" fontWeight={600} mb={1}>
+            OneDrive Integration
+          </Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Connect a Microsoft OneDrive folder to sync documents bidirectionally.
+          </Typography>
+          {settingsCompany && (
+            <OneDriveConnect
+              companyId={settingsCompany.id}
+              onConnected={() => invalidateAll()}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 }

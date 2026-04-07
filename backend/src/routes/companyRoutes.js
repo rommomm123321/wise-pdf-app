@@ -11,5 +11,6 @@ router.post('/', CompanyController.createCompany);
 router.get('/my-company', CompanyController.getMyCompany);
 router.patch('/:id', CompanyController.updateCompany);
 router.delete('/:id', CompanyController.deleteCompany);
+router.post('/:id/restore', CompanyController.restoreCompany);
 
 module.exports = router;

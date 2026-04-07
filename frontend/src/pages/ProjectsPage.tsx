@@ -193,12 +193,14 @@ export default function ProjectsPage() {
 
   const isGeneralAdmin = user?.systemRole === "GENERAL_ADMIN";
 
+  const [searchQuery, setSearchQuery] = useState("");
   const [projectPage, setProjectPage] = useState(1);
   const [filterCompanyId, setFilterCompanyId] = useState<"ALL" | string>("ALL");
   const { data: projectsData, isLoading: projectsLoading } = useProjects(
     projectPage,
     20,
     filterCompanyId,
+    searchQuery
   );
   const projects = projectsData?.projects ?? [];
   const projectsPagination = projectsData?.pagination;
@@ -238,7 +240,6 @@ export default function ProjectsPage() {
     () =>
       (localStorage.getItem("projects-view-mode") as "grid" | "list") || "grid",
   );
-  const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>(
     () => (localStorage.getItem("projects-sort-by") as SortOption) || "manual",
   );
@@ -364,14 +365,6 @@ export default function ProjectsPage() {
 
   const processedProjects = useMemo(() => {
     let result = [...projects];
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          (p.description || "").toLowerCase().includes(q),
-      );
-    }
     if (sortBy === "manual" && preferences.projectOrder) {
       const orderMap = new Map(
         preferences.projectOrder.map((id: string, index: number) => [
@@ -471,7 +464,7 @@ export default function ProjectsPage() {
                     |
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {processedProjects.all.length} {t("items", "items")}
+                    {projectsPagination?.total ?? processedProjects.all.length} {t("items", "items")}
                   </Typography>
                 </Box>
               </>
@@ -863,10 +856,10 @@ export default function ProjectsPage() {
           variant="outlined"
           sx={{ overflowX: "auto", width: "100%", borderRadius: 2 }}
         >
-          <Table size={isMobile ? "small" : "medium"}>
+          <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell padding="checkbox" sx={{ pl: 2 }}>
+                <TableCell padding="checkbox" sx={{ pl: 2, width: 42 }}>
                   <Checkbox
                     size="small"
                     indeterminate={
@@ -905,12 +898,16 @@ export default function ProjectsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {processedProjects.all.map((p: any) => (
+              {processedProjects.all.map((p: any) => {
+                const isSelected = selectedIds.includes(p.id);
+                return (
                 <TableRow
                   key={p.id}
                   hover
-                  selected={selectedIds.includes(p.id)}
-                  sx={{ cursor: "pointer" }}
+                  selected={isSelected}
+                  sx={{
+                    cursor: "pointer",
+                  }}
                   onClick={() =>
                     selectedIds.length > 0
                       ? toggleSelect(p.id)
@@ -923,7 +920,7 @@ export default function ProjectsPage() {
                   >
                     <Checkbox
                       size="small"
-                      checked={selectedIds.includes(p.id)}
+                      checked={isSelected}
                       onChange={() => toggleSelect(p.id)}
                     />
                   </TableCell>
@@ -977,21 +974,24 @@ export default function ProjectsPage() {
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+              );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
       )}
 
-      {projectsPagination && projectsPagination.totalPages > 1 && (
-        <Box display="flex" justifyContent="center" mt={4} mb={2}>
-          <Pagination
-            count={projectsPagination.totalPages}
-            page={projectPage}
-            onChange={(_, p) => setProjectPage(p)}
-            color="primary"
-            size={isMobile ? "small" : "medium"}
-          />
+      {projectsPagination && (
+        <Box display="flex" flexDirection="column" alignItems="center" mt={3} mb={3} gap={1}>
+          {projectsPagination.totalPages > 1 && (
+            <Pagination
+              count={projectsPagination.totalPages}
+              page={projectPage}
+              onChange={(_, p) => setProjectPage(p)}
+              color="primary"
+              size={isMobile ? "small" : "medium"}
+            />
+          )}
         </Box>
       )}
 

@@ -54,10 +54,10 @@ const PropertySlider = ({ label, value, onChange, min = 0, max = 100, step = 1, 
   return (
     <Box mb={2.5}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
-        <Typography sx={{ fontSize: '0.65rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8 }}>
+        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8 }}>
           {label}
         </Typography>
-        <Typography sx={{ fontSize: '0.75rem', fontWeight: 700, color: gold }}>
+        <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: gold }}>
           {isVaries ? '---' : `${Math.round(value)}${unit}`}
         </Typography>
       </Box>
@@ -104,6 +104,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTargetField, setMentionTargetField] = useState<'subject' | 'comment' | string | null>(null);
   const mentionAnchorRef = useRef<HTMLDivElement>(null);
+  const threadMentionAnchorRef = useRef<HTMLDivElement>(null);
   const { data: projectUsers = [] } = useProjectUsers(projectId);
   const saveTimerRef = useRef<any>(null);
 
@@ -185,6 +186,8 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
     
     if (field === 'comment') {
       setCommentDraft(value);
+    } else if (field === 'thread') {
+      setThreadDraft(value);
     } else {
       handleLocalChange(field, value);
     }
@@ -201,13 +204,19 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
 
   const handleSelectMention = (user: ProjectUser) => {
     if (!mentionTargetField) return;
-    const currentVal = mentionTargetField === 'comment' ? (commentDraft ?? gv('comment') ?? '') : (gv(mentionTargetField) || '');
+    const currentVal = mentionTargetField === 'comment'
+      ? (commentDraft ?? gv('comment') ?? '')
+      : mentionTargetField === 'thread'
+        ? threadDraft
+        : (gv(mentionTargetField) || '');
     const lastAtIdx = currentVal.lastIndexOf('@');
     const newVal = currentVal.substring(0, lastAtIdx) + `@${user.name || user.email} ` + currentVal.substring(lastAtIdx + mentionQuery.length + 1);
-    
+
     if (mentionTargetField === 'comment') {
       setCommentDraft(newVal);
-      setCommentFocused(true); // stay in edit mode after selection
+      setCommentFocused(true);
+    } else if (mentionTargetField === 'thread') {
+      setThreadDraft(newVal);
     } else {
       handleLocalChange(mentionTargetField, newVal, true);
     }
@@ -266,8 +275,8 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
   const isTextType = markupType === 'text' && !isMulti;
 
   const sectionSx = { px: 1.5, py: 1.5, width: '100%', boxSizing: 'border-box' };
-  const labelSx = { fontSize: '0.65rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8, mb: 0.5, display: 'block' };
-  const inputSx = { height: 28, fontSize: '0.75rem', bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)', borderRadius: '4px', '& fieldset': { borderColor: 'divider' }, '&:hover fieldset': { borderColor: alpha(gold, 0.4) }, '&.Mui-focused fieldset': { borderColor: `${gold} !important` } };
+  const labelSx = { fontSize: '0.72rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8, mb: 0.5, display: 'block' };
+  const inputSx = { height: 28, fontSize: '0.82rem', bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)', borderRadius: '4px', '& fieldset': { borderColor: 'divider' }, '&:hover fieldset': { borderColor: alpha(gold, 0.4) }, '&.Mui-focused fieldset': { borderColor: `${gold} !important` } };
   const currentWidth = isMobile ? '100%' : PANEL_WIDTH;
   const getColorValue = (val: any, fallback: string) => (val === '__varies__' ? '#9e9e9e' : (val || fallback));
   const isVaries = (val: any) => val === '__varies__';
@@ -285,7 +294,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
       {!canEdit && (
         <Box sx={{ mx: 2, mb: 1, mt: 1, px: 1.5, py: 0.75, borderRadius: '6px', bgcolor: 'warning.main', opacity: 0.85, display: 'flex', alignItems: 'center', gap: 1 }}>
           <LockIcon sx={{ fontSize: 14, color: 'warning.contrastText' }} />
-          <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: 'warning.contrastText' }}>
+          <Typography sx={{ fontSize: '0.76rem', fontWeight: 600, color: 'warning.contrastText' }}>
             View only — you don't have edit rights
           </Typography>
         </Box>
@@ -308,7 +317,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             {markup.author && (
               <Box display="flex" alignItems="center" gap={0.75}>
                 <PersonIcon sx={{ fontSize: 12, color: 'text.secondary', flexShrink: 0 }} />
-                <Typography sx={{ fontSize: '0.65rem', color: 'text.secondary', lineHeight: 1.2 }}>
+                <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', lineHeight: 1.2 }}>
                   {t('createdBy', 'Created by')} <strong style={{ color: 'inherit' }}>{markup.author?.name || markup.author?.email || '—'}</strong>
                   {markup.createdAt && <> · {dayjs(markup.createdAt).format('MM/DD/YY HH:mm')}</>}
                 </Typography>
@@ -317,7 +326,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             {markup.updatedBy && (
               <Box display="flex" alignItems="center" gap={0.75}>
                 <AccessTimeIcon sx={{ fontSize: 12, color: 'text.secondary', flexShrink: 0 }} />
-                <Typography sx={{ fontSize: '0.65rem', color: 'text.secondary', lineHeight: 1.2 }}>
+                <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', lineHeight: 1.2 }}>
                   {t('updatedBy', 'Updated by')} <strong style={{ color: 'inherit' }}>{markup.updatedBy?.name || markup.updatedBy?.email || '—'}</strong>
                   {markup.updatedAt && <> · {dayjs(markup.updatedAt).format('MM/DD/YY HH:mm')}</>}
                 </Typography>
@@ -330,7 +339,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                   border: '1px solid', borderColor: 'warning.main', borderRadius: 0.5,
                   px: 0.4, lineHeight: 1.5,
                 }}>BB</Box>
-                <Typography sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
+                <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
                   {t('importedFromBluebeam', 'Imported from Bluebeam')}
                   {markup.properties?.bluebeamAuthor && (
                     <> · <strong>{markup.properties.bluebeamAuthor as string}</strong></>
@@ -346,7 +355,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
           <Box sx={{ px: 1.5, py: 1 }}>
             {isSingle && markup?.properties?.pathLength != null && (
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography sx={{ fontSize: '0.65rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8 }}>
                   Length
                 </Typography>
                 <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: gold }}>
@@ -364,7 +373,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                   sx={{ py: 0, color: gold, '&.Mui-checked': { color: gold } }}
                 />
               }
-              label={<Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>Show length on canvas</Typography>}
+              label={<Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>Show length on canvas</Typography>}
               sx={{ ml: 0 }}
             />
           </Box>
@@ -388,7 +397,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                       <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('fill'), 'transparent'), border: '1px solid #ccc' }} />
                       <input type="color" value={gv('fill') || '#ffffff'} onChange={e => handleLocalChange('fill', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
                     </Box>
-                    <IconButton size="small" onClick={() => handleLocalChange('fill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.6rem', fontWeight: 700 }}>NONE</Typography></IconButton>
+                    <IconButton size="small" onClick={() => handleLocalChange('fill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.70rem', fontWeight: 700 }}>NONE</Typography></IconButton>
                   </Box>
                 </Box>
               </>
@@ -411,7 +420,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                         <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('fill'), 'transparent'), border: '1px solid #ccc' }} />
                         <input type="color" value={isVaries(gv('fill')) ? '#9e9e9e' : (gv('fill') || '#ffffff')} onChange={e => handleLocalChange('fill', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
                       </Box>
-                      <IconButton size="small" onClick={() => handleLocalChange('fill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.6rem', fontWeight: 700 }}>NONE</Typography></IconButton>
+                      <IconButton size="small" onClick={() => handleLocalChange('fill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.70rem', fontWeight: 700 }}>NONE</Typography></IconButton>
                     </Box>
                   </Box>
                 )}
@@ -444,8 +453,8 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                     if (newW > 0 && (!gv('stroke') || gv('stroke') === 'transparent')) {
                       handleLocalChange('stroke', '#000000', true);
                     }
-                  }} sx={{ p: 0.5, fontSize: '0.6rem', fontWeight: 700, color: (gv('strokeWidth') ?? 0) > 0 ? gold : 'text.disabled' }}>
-                    <Typography sx={{ fontSize: '0.6rem', fontWeight: 700 }}>{(gv('strokeWidth') ?? 0) > 0 ? 'ON' : 'OFF'}</Typography>
+                  }} sx={{ p: 0.5, fontSize: '0.70rem', fontWeight: 700, color: (gv('strokeWidth') ?? 0) > 0 ? gold : 'text.disabled' }}>
+                    <Typography sx={{ fontSize: '0.70rem', fontWeight: 700 }}>{(gv('strokeWidth') ?? 0) > 0 ? 'ON' : 'OFF'}</Typography>
                   </IconButton>
                 </Box>
               </Box>
@@ -467,7 +476,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                 sx={inputSx}
                 renderValue={(val) =>
                   val === '__varies__'
-                    ? <em style={{ fontSize: '0.72rem' }}>{t('varies', 'Varies')}</em>
+                    ? <em style={{ fontSize: '0.78rem' }}>{t('varies', 'Varies')}</em>
                     : <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                         <LinePreview style={val as any} width={gv('strokeWidth') || 2} previewWidth={180} />
                       </Box>
@@ -496,6 +505,27 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             </Box>
           )}
           {hasFontSize && <PropertySlider label={t('fontSize', 'Font Size')} value={gv('fontSize') ?? 14} onChange={(v: number) => handleLocalChange('fontSize', v)} min={1} max={1000} unit="px" />}
+          {/* Callout-specific: inline text editing */}
+          {markupType === 'callout' && !isMulti && (
+            <Box mb={2} sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
+              <Typography sx={labelSx} mb={0.5}>Text</Typography>
+              <textarea
+                value={gv('text') || ''}
+                onChange={e => handleLocalChange('text', e.target.value)}
+                onBlur={e => savePropertyImmediate('text', e.target.value)}
+                rows={3}
+                placeholder="Enter callout text..."
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '6px 8px', borderRadius: '4px', resize: 'vertical',
+                  border: `1px solid rgba(128,128,128,0.3)`,
+                  background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                  color: 'inherit', fontSize: '0.82rem', fontFamily: 'inherit', lineHeight: 1.4,
+                  outline: 'none',
+                }}
+              />
+            </Box>
+          )}
           {/* Callout-specific: text box background fill */}
           {markupType === 'callout' && !isMulti && (
             <Box mb={2}>
@@ -505,7 +535,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                   <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('textBoxFill'), '#ffffff'), border: '1px solid #ccc' }} />
                   <input type="color" value={isVaries(gv('textBoxFill')) ? '#9e9e9e' : (gv('textBoxFill') || '#ffffff')} onChange={e => handleLocalChange('textBoxFill', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
                 </Box>
-                <IconButton size="small" onClick={() => handleLocalChange('textBoxFill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.6rem', fontWeight: 700 }}>NONE</Typography></IconButton>
+                <IconButton size="small" onClick={() => handleLocalChange('textBoxFill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.70rem', fontWeight: 700 }}>NONE</Typography></IconButton>
               </Box>
             </Box>
           )}
@@ -521,7 +551,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                       sx={{ flex: 1, py: 0.5, px: 1, border: 2, borderRadius: '6px', cursor: 'pointer', textAlign: 'center',
                         borderColor: (gv('arrowStyle') || 'end') === style ? gold : 'divider',
                         bgcolor: (gv('arrowStyle') || 'end') === style ? alpha(gold, 0.1) : 'transparent' }}>
-                      <Typography sx={{ fontSize: '0.65rem', fontWeight: 600 }}>
+                      <Typography sx={{ fontSize: '0.72rem', fontWeight: 600 }}>
                         {style === 'end' ? '→' : style === 'start' ? '←' : '↔'}
                       </Typography>
                     </Box>
@@ -539,7 +569,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             <Typography sx={labelSx}>{t('status', 'Status')}</Typography>
             <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
               {Object.entries(STATUS_LABELS).map(([key, label]) => {
-                const active = (gv('status') || 'open') === key;
+                const active = (gv('status') || 'none') === key;
                 return (
                   <Box key={key} onClick={() => canEdit && handleLocalChange('status', key, true)}
                     sx={{
@@ -553,7 +583,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                     }}
                   >
                     <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: STATUS_COLORS[key], flexShrink: 0 }} />
-                    <Typography sx={{ fontSize: '0.65rem', fontWeight: active ? 700 : 500, color: active ? STATUS_COLORS[key] : 'text.secondary', lineHeight: 1 }}>
+                    <Typography sx={{ fontSize: '0.72rem', fontWeight: active ? 700 : 500, color: active ? STATUS_COLORS[key] : 'text.secondary', lineHeight: 1 }}>
                       {label}
                     </Typography>
                   </Box>
@@ -583,7 +613,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                     <Button
                       size="small"
                       variant="contained"
-                      sx={{ fontSize: '0.65rem', minWidth: 0, py: 0.25, px: 1.5, textTransform: 'none' }}
+                      sx={{ fontSize: '0.72rem', minWidth: 0, py: 0.25, px: 1.5, textTransform: 'none' }}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         handleLocalChange('comment', commentDraft, true);
@@ -599,15 +629,15 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             ) : (
               // View mode OR canEdit but not yet focused — show MentionText with click-to-edit
               <Box
-                sx={{ ...inputSx, height: 'auto', p: 1, borderRadius: '4px', border: '1px solid', borderColor: 'divider', minHeight: 62, fontSize: '0.75rem', lineHeight: 1.5, pointerEvents: 'auto', cursor: canEdit ? 'text' : 'default' }}
+                sx={{ ...inputSx, height: 'auto', p: 1, borderRadius: '4px', border: '1px solid', borderColor: 'divider', minHeight: 62, fontSize: '0.82rem', lineHeight: 1.5, pointerEvents: 'auto', cursor: canEdit ? 'text' : 'default' }}
                 onClick={() => { if (canEdit) setCommentFocused(true); }}
               >
                 <MentionText text={gv('comment') || ''} projectUsers={projectUsers} />
               </Box>
             )}
           </Box>
-          <Popover open={mentionOpen && Boolean(mentionAnchorRef.current)} anchorEl={mentionAnchorRef.current} onClose={() => setMentionOpen(false)} anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }} disableAutoFocus disableEnforceFocus slotProps={{ paper: { sx: { width: 200, maxHeight: 250, overflowY: 'auto', zIndex: 3000 } } }}>
-            <List dense onMouseDown={(e) => e.preventDefault()}>{projectUsers.filter(u => !mentionQuery || (u.name || u.email).toLowerCase().includes(mentionQuery.toLowerCase())).map(user => <ListItemButton key={user.id} onClick={() => handleSelectMention(user)}><ListItemIcon sx={{ minWidth: 32 }}><Avatar sx={{ width: 24, height: 24, fontSize: '0.6rem' }}>{(user.name || user.email)[0].toUpperCase()}</Avatar></ListItemIcon><ListItemText primary={user.name || user.email} primaryTypographyProps={{ fontSize: '0.75rem', noWrap: true }} /></ListItemButton>)}</List>
+          <Popover open={mentionOpen && !!projectUsers.length} anchorEl={mentionTargetField === 'thread' ? threadMentionAnchorRef.current : mentionAnchorRef.current} onClose={() => setMentionOpen(false)} anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }} disableAutoFocus disableEnforceFocus slotProps={{ paper: { sx: { width: 200, maxHeight: 250, overflowY: 'auto', zIndex: 3000 } } }}>
+            <List dense onMouseDown={(e) => e.preventDefault()}>{projectUsers.filter(u => !mentionQuery || (u.name || u.email).toLowerCase().includes(mentionQuery.toLowerCase())).map(user => <ListItemButton key={user.id} onClick={() => handleSelectMention(user)}><ListItemIcon sx={{ minWidth: 32 }}><Avatar sx={{ width: 24, height: 24, fontSize: '0.70rem' }}>{(user.name || user.email)[0].toUpperCase()}</Avatar></ListItemIcon><ListItemText primary={user.name || user.email} primaryTypographyProps={{ fontSize: '0.82rem', noWrap: true }} /></ListItemButton>)}</List>
           </Popover>
 
           {/* Thread / Replies */}
@@ -617,9 +647,9 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
               {((gv('thread') as any[]) || []).map((entry: any) => (
                 <Box key={entry.id} sx={{ mb: 1, p: 1, borderRadius: '6px', bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: '1px solid', borderColor: 'divider', position: 'relative' }}>
                   <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.25}>
-                    <Typography sx={{ fontSize: '0.62rem', fontWeight: 700, color: gold }}>{entry.authorName || '?'}</Typography>
+                    <Typography sx={{ fontSize: '0.70rem', fontWeight: 700, color: gold }}>{entry.authorName || '?'}</Typography>
                     <Box display="flex" alignItems="center" gap={0.5}>
-                      <Typography sx={{ fontSize: '0.6rem', color: 'text.disabled' }}>{entry.createdAt ? dayjs(entry.createdAt).format('MM/DD HH:mm') : ''}</Typography>
+                      <Typography sx={{ fontSize: '0.70rem', color: 'text.disabled' }}>{entry.createdAt ? dayjs(entry.createdAt).format('MM/DD HH:mm') : ''}</Typography>
                       {canEdit && (isAdmin || entry.authorId === currentUserId) && (
                         <IconButton size="small" sx={{ p: 0.2, opacity: 0.5, '&:hover': { opacity: 1, color: 'error.main' } }}
                           onClick={() => {
@@ -631,16 +661,18 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                       )}
                     </Box>
                   </Box>
-                  <Typography sx={{ fontSize: '0.72rem', color: 'text.primary', lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{entry.text}</Typography>
+                  <Box sx={{ fontSize: '0.78rem', color: 'text.primary', lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    <MentionText text={entry.text || ''} projectUsers={projectUsers} />
+                  </Box>
                 </Box>
               ))}
               {canEdit && (
-                <Box display="flex" gap={1} mt={1}>
+                <Box ref={threadMentionAnchorRef} display="flex" gap={1} mt={1}>
                   <InputBase
                     fullWidth multiline maxRows={3}
-                    placeholder={t('addReply', 'Add a reply…')}
+                    placeholder={t('addReply', 'Add a reply… (@ to mention)')}
                     value={threadDraft}
-                    onChange={e => setThreadDraft(e.target.value)}
+                    onChange={e => handleMentionInput(e, 'thread')}
                     onKeyDown={e => {
                       if (e.key === 'Enter' && !e.shiftKey && threadDraft.trim()) {
                         e.preventDefault();
@@ -649,9 +681,9 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                         setThreadDraft('');
                       }
                     }}
-                    sx={{ ...inputSx, height: 'auto', p: 1, fontSize: '0.72rem' }}
+                    sx={{ ...inputSx, height: 'auto', p: 1, fontSize: '0.78rem' }}
                   />
-                  <Button size="small" variant="contained" disabled={!threadDraft.trim()} sx={{ fontSize: '0.62rem', minWidth: 0, py: 0.5, px: 1.5, textTransform: 'none', alignSelf: 'flex-end' }}
+                  <Button size="small" variant="contained" disabled={!threadDraft.trim()} sx={{ fontSize: '0.70rem', minWidth: 0, py: 0.5, px: 1.5, textTransform: 'none', alignSelf: 'flex-end' }}
                     onClick={() => {
                       if (!threadDraft.trim()) return;
                       const newEntry = { id: Date.now().toString(), authorId: currentUserId || '', authorName: markup?.author?.name || markup?.author?.email || 'Me', text: threadDraft.trim(), createdAt: new Date().toISOString() };
@@ -671,8 +703,8 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
               control={<Checkbox size="small" checked={useTemplate} onChange={e => setUseTemplate(e.target.checked)} sx={{ color: gold, '&.Mui-checked': { color: gold } }} disabled={!canEdit} />}
               label={
                 <Box sx={{ pointerEvents: 'auto' }}>
-                  <Typography sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{t('applyToAllMarkups', 'Apply to All')}</Typography>
-                  <Typography sx={{ fontSize: '0.6rem', color: 'text.secondary', lineHeight: 1.2 }}>text fields → all markups</Typography>
+                  <Typography sx={{ fontSize: '0.82rem', fontWeight: 600 }}>{t('applyToAllMarkups', 'Apply to All')}</Typography>
+                  <Typography sx={{ fontSize: '0.70rem', color: 'text.secondary', lineHeight: 1.2 }}>text fields → all markups</Typography>
                 </Box>
               }
             />
@@ -684,7 +716,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.75}>
             <Typography sx={labelSx}>{t('stylePresets', 'Style Presets')}</Typography>
             {canEdit && !isSavingPreset && (
-              <Typography variant="caption" sx={{ cursor: 'pointer', fontWeight: 600, color: 'primary.main', fontSize: '0.62rem', '&:hover': { textDecoration: 'underline' } }} onClick={() => setIsSavingPreset(true)}>
+              <Typography variant="caption" sx={{ cursor: 'pointer', fontWeight: 600, color: 'primary.main', fontSize: '0.70rem', '&:hover': { textDecoration: 'underline' } }} onClick={() => setIsSavingPreset(true)}>
                 + {t('saveStyle', 'Save current')}
               </Typography>
             )}
@@ -696,7 +728,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                   onChange={e => setSavePresetName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleSavePreset(); if (e.key === 'Escape') { setIsSavingPreset(false); setSavePresetName(''); } }}
                   placeholder="Preset name"
-                  sx={{ ...inputSx, px: 1, height: 24, fontSize: '0.7rem', width: 100 }}
+                  sx={{ ...inputSx, px: 1, height: 24, fontSize: '0.76rem', width: 100 }}
                 />
                 <IconButton size="small" onClick={handleSavePreset} disabled={!savePresetName.trim()} sx={{ p: 0.25, color: gold }}><CheckIcon sx={{ fontSize: 13 }} /></IconButton>
                 <IconButton size="small" onClick={() => { setIsSavingPreset(false); setSavePresetName(''); }} sx={{ p: 0.25 }}><CloseIcon sx={{ fontSize: 13 }} /></IconButton>
@@ -704,29 +736,38 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             )}
           </Box>
           {presets.length === 0 ? (
-            <Typography sx={{ fontSize: '0.63rem', color: 'text.disabled', fontStyle: 'italic' }}>No presets yet</Typography>
+            <Typography sx={{ fontSize: '0.70rem', color: 'text.disabled', fontStyle: 'italic' }}>No presets yet</Typography>
           ) : (
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
               {presets.map((p: any) => {
                 const strokeField = (p.fields || []).find((f: any) => f.key === 'stroke');
                 return (
-                  <Tooltip key={p.id} title={`Apply: ${p.name}`} placement="top">
-                    <Box
-                      onClick={() => applyPreset(p)}
-                      sx={{
-                        display: 'flex', alignItems: 'center', gap: 0.5,
-                        px: 1, py: 0.3, borderRadius: '10px', cursor: canEdit ? 'pointer' : 'default',
-                        border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover',
-                        transition: 'all 0.1s',
-                        '&:hover': canEdit ? { borderColor: alpha(gold, 0.5), bgcolor: alpha(gold, 0.08) } : {},
-                      }}
-                    >
-                      {strokeField && (
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: strokeField.defaultValue || gold, flexShrink: 0 }} />
-                      )}
-                      <Typography sx={{ fontSize: '0.62rem', fontWeight: 600, lineHeight: 1 }}>{p.name}</Typography>
-                    </Box>
-                  </Tooltip>
+                  <Box key={p.id} sx={{ display: 'flex', alignItems: 'center', border: '1px solid', borderColor: 'divider', borderRadius: '10px', overflow: 'hidden', bgcolor: 'action.hover', '&:hover': canEdit ? { borderColor: alpha(gold, 0.5), bgcolor: alpha(gold, 0.08) } : {} }}>
+                    <Tooltip title={`Apply: ${p.name}`} placement="top">
+                      <Box
+                        onClick={() => applyPreset(p)}
+                        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.3, cursor: canEdit ? 'pointer' : 'default' }}
+                      >
+                        {strokeField && (
+                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: strokeField.defaultValue || gold, flexShrink: 0 }} />
+                        )}
+                        <Typography sx={{ fontSize: '0.70rem', fontWeight: 600, lineHeight: 1 }}>{p.name}</Typography>
+                      </Box>
+                    </Tooltip>
+                    {canEdit && (
+                      <Tooltip title="Delete preset" placement="top">
+                        <IconButton size="small" sx={{ p: 0.25, borderRadius: 0, color: 'text.disabled', '&:hover': { color: 'error.main', bgcolor: 'transparent' } }}
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await apiFetch(`/api/presets/${p.id}`, { method: 'DELETE' });
+                            setPresets(prev => prev.filter(x => x.id !== p.id));
+                          }}
+                        >
+                          <CloseIcon sx={{ fontSize: 11 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Box>
                 );
               })}
             </Box>
@@ -735,7 +776,10 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
         <Divider />
         <Box sx={sectionSx}>
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5} sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}><Typography sx={labelSx}>{t('customParameters', 'Custom Parameters')}</Typography>{loadingFields && <CircularProgress size={12} color="inherit" />}</Box>
-          {customFields.map(field => (
+          {customFields.filter(field => {
+            const v = gv(field.key);
+            return typeof v !== 'object' || v === null; // skip thread/arrays/objects
+          }).map(field => (
             <Box key={field.id} mb={1.5} display="flex" alignItems="center" gap={1} width="100%" sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
               <Typography sx={{ ...labelSx, mb: 0, minWidth: 80, flexShrink: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{field.label || field.key}</Typography>
               <InputBase fullWidth value={gv(field.key) || ''} onChange={e => handleMentionInput(e, field.key)} sx={{ ...inputSx, flex: 1, px: 1 }} placeholder="" />
@@ -762,7 +806,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
               {/* Show note when multi-selection contains markups not owned by current user */}
               {isMulti && !isAdmin && currentUserId != null && selectedMarkups.some(m => m.authorId !== currentUserId) && (
                 <Box sx={{ mb: 1.5, px: 1, py: 0.75, borderRadius: '6px', bgcolor: alpha(gold, 0.08), border: `1px solid ${alpha(gold, 0.2)}` }}>
-                  <Typography sx={{ fontSize: '0.65rem', color: 'text.secondary', lineHeight: 1.4 }}>
+                  <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', lineHeight: 1.4 }}>
                     Permission changes apply only to <strong>your markups</strong> in this selection. Others' markups are skipped.
                   </Typography>
                 </Box>
@@ -778,21 +822,21 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                       <Typography variant="caption" color="text.secondary">{t('allowedEditors', 'Allowed to Edit')}</Typography>
                       <FormControlLabel
                         control={<Checkbox size="small" checked={restricted} onChange={e => handleRestrictToggle('allowedEditUserIds', e.target.checked)} sx={{ p: 0.5, color: gold, '&.Mui-checked': { color: gold } }} />}
-                        label={<Typography sx={{ fontSize: '0.6rem', fontWeight: 600 }}>Restrict</Typography>}
+                        label={<Typography sx={{ fontSize: '0.70rem', fontWeight: 600 }}>Restrict</Typography>}
                       />
                     </Box>
                     {!restricted
                       ? <Box sx={{ px: 1, py: 0.5, borderRadius: '4px', bgcolor: alpha('#4caf50', 0.08), border: '1px solid', borderColor: alpha('#4caf50', 0.2) }}>
-                          <Typography sx={{ fontSize: '0.68rem', color: 'success.main', fontWeight: 600 }}>Everyone can edit</Typography>
+                          <Typography sx={{ fontSize: '0.74rem', color: 'success.main', fontWeight: 600 }}>Everyone can edit</Typography>
                         </Box>
                       : <Select multiple fullWidth size="small" value={selectedIds}
                           onChange={e => handleLocalChange('allowedEditUserIds', e.target.value, true)}
-                          renderValue={(sel: any) => { const arr = Array.isArray(sel) ? sel : []; return arr.length === 0 ? <em style={{ fontSize: '0.72rem', color: 'var(--mui-palette-error-main)' }}>Nobody</em> : arr.map((id: string) => projectUsers.find(u => u.id === id)?.name || id).join(', '); }}
+                          renderValue={(sel: any) => { const arr = Array.isArray(sel) ? sel : []; return arr.length === 0 ? <em style={{ fontSize: '0.78rem', color: 'var(--mui-palette-error-main)' }}>Nobody</em> : arr.map((id: string) => projectUsers.find(u => u.id === id)?.name || id).join(', '); }}
                           sx={{ ...inputSx, '& .MuiSelect-select': { py: 0.5, px: 1 } }}
                           MenuProps={{ PaperProps: { sx: { bgcolor: 'background.paper', border: 1, borderColor: 'divider', maxHeight: 240 } } }}
                         >
                           {projectUsers.map(u => (
-                            <MenuItem key={u.id} value={u.id} sx={{ fontSize: '0.75rem' }}>
+                            <MenuItem key={u.id} value={u.id} sx={{ fontSize: '0.82rem' }}>
                               <Checkbox size="small" checked={selectedIds.includes(u.id)} sx={{ p: 0.5, mr: 0.5, color: gold, '&.Mui-checked': { color: gold } }} />
                               {u.name || u.email}
                             </MenuItem>
@@ -800,7 +844,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                         </Select>
                     }
                     {restricted && selectedIds.length === 0 && (
-                      <Typography sx={{ fontSize: '0.62rem', color: 'error.main', mt: 0.5 }}>Nobody can edit (except owner &amp; admins)</Typography>
+                      <Typography sx={{ fontSize: '0.70rem', color: 'error.main', mt: 0.5 }}>Nobody can edit (except owner &amp; admins)</Typography>
                     )}
                   </Box>
                 );
@@ -816,21 +860,21 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                       <Typography variant="caption" color="text.secondary">{t('allowedDeleters', 'Allowed to Delete')}</Typography>
                       <FormControlLabel
                         control={<Checkbox size="small" checked={restricted} onChange={e => handleRestrictToggle('allowedDeleteUserIds', e.target.checked)} sx={{ p: 0.5, color: gold, '&.Mui-checked': { color: gold } }} />}
-                        label={<Typography sx={{ fontSize: '0.6rem', fontWeight: 600 }}>Restrict</Typography>}
+                        label={<Typography sx={{ fontSize: '0.70rem', fontWeight: 600 }}>Restrict</Typography>}
                       />
                     </Box>
                     {!restricted
                       ? <Box sx={{ px: 1, py: 0.5, borderRadius: '4px', bgcolor: alpha('#4caf50', 0.08), border: '1px solid', borderColor: alpha('#4caf50', 0.2) }}>
-                          <Typography sx={{ fontSize: '0.68rem', color: 'success.main', fontWeight: 600 }}>Everyone can delete</Typography>
+                          <Typography sx={{ fontSize: '0.74rem', color: 'success.main', fontWeight: 600 }}>Everyone can delete</Typography>
                         </Box>
                       : <Select multiple fullWidth size="small" value={selectedIds}
                           onChange={e => handleLocalChange('allowedDeleteUserIds', e.target.value, true)}
-                          renderValue={(sel: any) => { const arr = Array.isArray(sel) ? sel : []; return arr.length === 0 ? <em style={{ fontSize: '0.72rem', color: 'var(--mui-palette-error-main)' }}>Nobody</em> : arr.map((id: string) => projectUsers.find(u => u.id === id)?.name || id).join(', '); }}
+                          renderValue={(sel: any) => { const arr = Array.isArray(sel) ? sel : []; return arr.length === 0 ? <em style={{ fontSize: '0.78rem', color: 'var(--mui-palette-error-main)' }}>Nobody</em> : arr.map((id: string) => projectUsers.find(u => u.id === id)?.name || id).join(', '); }}
                           sx={{ ...inputSx, '& .MuiSelect-select': { py: 0.5, px: 1 } }}
                           MenuProps={{ PaperProps: { sx: { bgcolor: 'background.paper', border: 1, borderColor: 'divider', maxHeight: 240 } } }}
                         >
                           {projectUsers.map(u => (
-                            <MenuItem key={u.id} value={u.id} sx={{ fontSize: '0.75rem' }}>
+                            <MenuItem key={u.id} value={u.id} sx={{ fontSize: '0.82rem' }}>
                               <Checkbox size="small" checked={selectedIds.includes(u.id)} sx={{ p: 0.5, mr: 0.5, color: gold, '&.Mui-checked': { color: gold } }} />
                               {u.name || u.email}
                             </MenuItem>
@@ -838,7 +882,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                         </Select>
                     }
                     {restricted && selectedIds.length === 0 && (
-                      <Typography sx={{ fontSize: '0.62rem', color: 'error.main', mt: 0.5 }}>Nobody can delete (except owner &amp; admins)</Typography>
+                      <Typography sx={{ fontSize: '0.70rem', color: 'error.main', mt: 0.5 }}>Nobody can delete (except owner &amp; admins)</Typography>
                     )}
                   </Box>
                 );

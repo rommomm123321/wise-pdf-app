@@ -29,7 +29,32 @@
       "Bash(grep -v \"comment\\\\|//\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''dependencies'''',{}\\), indent=2\\)\\)\")",
       "Bash(npm install:*)",
-      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''dependencies'''',{}\\), indent=2\\)\\)\")"
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''dependencies'''',{}\\), indent=2\\)\\)\")",
+      "Bash(find /c/Users/roman/Desktop/redlines/tile-server -type f -name *.json -o -name *.js -o -name *.ts -o -name *.py -o -name *.go -o -name *.rs -o -name *.java)",
+      "Bash(go build:*)",
+      "Bash(/usr/local/go/bin/go version:*)",
+      "Read(//usr/local/go/**)",
+      "Bash(curl -s http://localhost:8080/health)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Read(//c/Program Files/Go/**)",
+      "Read(//c/Users/roman/**)",
+      "Bash(perl -i -pe ':*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker-compose build:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(grep -n \"^const DocumentViewPage\\\\|^export default\\\\|^}\\);$\\\\|^}\\)\" /c/Users/roman/Desktop/redlines/frontend/src/pages/DocumentViewPage_temp.tsx)",
+      "Bash(go doc:*)",
+      "Bash(npm list:*)",
+      "Bash(sed -i \"s/canManage: true, scope: 'FULL'/canManage: true, canUpload: true, scope: 'FULL'/g\" backend/src/middlewares/permissionMiddleware.js)",
+      "Bash(sed -i \"s/canManage: true }/canManage: true, canUpload: true }/g\" backend/src/middlewares/permissionMiddleware.js)",
+      "Bash(sed -i \"s/canMarkup: false, canManage: false/canMarkup: false, canManage: false, canUpload: false/g\" backend/src/middlewares/permissionMiddleware.js)",
+      "Bash(sed -i \"s/canMarkup: false, isGhost: true/canMarkup: false, canUpload: false, isGhost: true/g\" backend/src/middlewares/permissionMiddleware.js)",
+      "Bash(docker rm:*)",
+      "Bash(xxd /c/tmp/test_overlay.pdf)"
     ]
   }
 }

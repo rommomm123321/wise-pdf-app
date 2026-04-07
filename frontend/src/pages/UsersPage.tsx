@@ -99,7 +99,8 @@ export default function UsersPage() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const [userPage, setUserPage] = useState(1);
-  const { data: usersData, isLoading } = useUsers(userPage, 20);
+  const [search, setSearch] = useState('');
+  const { data: usersData, isLoading } = useUsers(userPage, 20, search);
   const users = usersData?.users ?? [];
   const usersPagination = usersData?.pagination;
   const { data: companyTags = [] } = useCompanyTags();
@@ -156,7 +157,6 @@ export default function UsersPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Search, filter, sort
-  const [search, setSearch] = useState('');
   const [filterRoleId, setFilterRoleId] = useState<string>('ALL');
   const [filterTagId, setFilterTagId] = useState<string>('ALL');
   const [filterCompanyId, setFilterCompanyId] = useState<string>('ALL');
@@ -166,13 +166,6 @@ export default function UsersPage() {
 
   const filteredUsers = useMemo(() => {
     let result = [...users];
-    if (search) {
-      const q = search.toLowerCase();
-      result = result.filter(u => 
-        (u.name || '').toLowerCase().includes(q) || 
-        u.email.toLowerCase().includes(q)
-      );
-    }
     if (filterRoleId !== 'ALL') {
       result = result.filter(u => u.roleId === filterRoleId);
     }
@@ -187,7 +180,7 @@ export default function UsersPage() {
     result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     return result;
-  }, [users, search, filterRoleId, filterTagId, filterCompanyId]);
+  }, [users, filterRoleId, filterTagId, filterCompanyId]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -218,7 +211,7 @@ export default function UsersPage() {
         gap={2}
         mb={3}
       >
-        <Typography variant="h5" fontWeight={700}>{t('users')} ({filteredUsers.length})</Typography>
+        <Typography variant="h5" fontWeight={700}>{t('users')} ({usersPagination?.total ?? filteredUsers.length})</Typography>
         <Box 
           display="flex" 
           gap={1} 
@@ -363,7 +356,7 @@ export default function UsersPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell padding="checkbox" sx={{ pl: 2 }}>
+                <TableCell padding="checkbox" sx={{ pl: 2, width: 42 }}>
                   <Checkbox size="small"
                     indeterminate={selectedIds.length > 0 && selectedIds.length < filteredUsers.length}
                     checked={filteredUsers.length > 0 && selectedIds.length === filteredUsers.length}
@@ -383,10 +376,12 @@ export default function UsersPage() {
               {filteredUsers.map((u: any) => {
                 const isSelected = selectedIds.includes(u.id);
                 return (
-                  <TableRow key={u.id} hover selected={isSelected} onClick={() => toggleSelect(u.id)} sx={{ cursor: 'pointer' }}>
+                  <TableRow key={u.id} hover selected={isSelected} onClick={() => setDetailUserId(u.id)} sx={{
+                    cursor: 'pointer',
+                  }}>
                     <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}>
-                    <Checkbox size="small" checked={isSelected} onChange={() => toggleSelect(u.id)} />
-                  </TableCell>
+                      <Checkbox size="small" checked={isSelected} onChange={() => toggleSelect(u.id)} onClick={(e) => e.stopPropagation()} />
+                    </TableCell>
                   {showCol('name') && (
                     <TableCell>
                       <Box display="flex" alignItems="center" gap={1.5}>
@@ -421,8 +416,10 @@ export default function UsersPage() {
                     </TableCell>
                   )}
                   {showCol('actions') && (
-                    <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                      <IconButton size="small" onClick={() => setDetailUserId(u.id)}><EditIcon fontSize="small" /></IconButton>
+                    <TableCell align="right" onClick={(e) => e.stopPropagation()} sx={{ pr: 1 }}>
+                      <IconButton size="small" onClick={() => setDetailUserId(u.id)}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
                     </TableCell>
                   )}
                   </TableRow>
@@ -433,11 +430,15 @@ export default function UsersPage() {
         </TableContainer>
       )}
 
-      {usersPagination && usersPagination.totalPages > 1 && (
-        <Box display="flex" justifyContent="center" mt={3}>
-          <Pagination count={usersPagination.totalPages} page={userPage} onChange={(_, p) => setUserPage(p)} color="primary" />
+      {usersPagination && (
+        <Box display="flex" flexDirection="column" alignItems="center" mt={3} mb={3} gap={1}>
+          {usersPagination.totalPages > 1 && (
+            <Pagination count={usersPagination.totalPages} page={userPage} onChange={(_, p) => setUserPage(p)} color="primary" size={isMobile ? "small" : "medium"} />
+          )}
         </Box>
       )}
+
+
 
       <BulkActionsToolbar
         selectedCount={selectedIds.length}

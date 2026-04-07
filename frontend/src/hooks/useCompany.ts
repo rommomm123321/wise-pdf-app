@@ -20,11 +20,11 @@ export function useAllCompanies() {
   });
 }
 
-export function useCompanyStats() {
+export function useCompanyStats(page = 1, limit = 20, search = '') {
   return useQuery({
-    queryKey: ['company-stats'],
+    queryKey: ['company-stats', page, limit, search],
     queryFn: () =>
-      apiFetch<{ status: string; data: any[] }>('/api/companies/stats')
-        .then((r) => r.data),
+      apiFetch<{ status: string; data: any[]; pagination?: any }>(`/api/companies/stats?page=${page}&limit=${limit}${search ? `&search=${encodeURIComponent(search)}` : ''}`)
+        .then((r) => r),
   });
 }

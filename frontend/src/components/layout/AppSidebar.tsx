@@ -48,6 +48,17 @@ export default function AppSidebar({ open, onClose }: AppSidebarProps) {
   const isAuditPage = location.pathname === '/audit-logs';
   const isAdmin = user?.systemRole === 'GENERAL_ADMIN' || user?.role?.name === 'Admin';
 
+  const navItems = [
+    user?.systemRole === 'GENERAL_ADMIN', // Companies
+    true, // Projects
+    isAdmin, // Users
+    isAdmin // Audit Logs
+  ].filter(Boolean).length;
+
+  if (navItems <= 1 && !currentProjectId) return null;
+
+  const showMainNav = navItems > 1;
+
   const content = (
     <Box 
       sx={{ 
@@ -74,48 +85,50 @@ export default function AppSidebar({ open, onClose }: AppSidebarProps) {
       <Toolbar /> {/* Spacer for AppBar */}
 
       {/* Main nav */}
-      <List sx={{ px: 1, py: 1 }}>
-        {user?.systemRole === 'GENERAL_ADMIN' && (
-          <ListItemButton
-            selected={location.pathname === '/companies'}
-            onClick={() => handleNav('/companies')}
-            sx={{ borderRadius: 2, mb: 0.5 }}
-          >
-            <ListItemIcon sx={{ minWidth: 40 }}><BusinessIcon /></ListItemIcon>
-            <ListItemText primary={t('companies', 'Companies')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
-          </ListItemButton>
-        )}
+      {showMainNav && (
+        <List sx={{ px: 1, py: 1 }}>
+          {user?.systemRole === 'GENERAL_ADMIN' && (
+            <ListItemButton
+              selected={location.pathname === '/companies'}
+              onClick={() => handleNav('/companies')}
+              sx={{ borderRadius: 2, mb: 0.5 }}
+            >
+              <ListItemIcon sx={{ minWidth: 40 }}><BusinessIcon /></ListItemIcon>
+              <ListItemText primary={t('companies', 'Companies')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
+            </ListItemButton>
+          )}
 
-        <ListItemButton
-          selected={isProjects}
-          onClick={() => handleNav('/projects')}
-          sx={{ borderRadius: 2, mb: 0.5 }}
-        >
-          <ListItemIcon sx={{ minWidth: 40 }}><FolderSpecialIcon /></ListItemIcon>
-          <ListItemText primary={t('projects')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
-        </ListItemButton>
+          <ListItemButton
+            selected={isProjects}
+            onClick={() => handleNav('/projects')}
+            sx={{ borderRadius: 2, mb: 0.5 }}
+          >
+            <ListItemIcon sx={{ minWidth: 40 }}><FolderSpecialIcon /></ListItemIcon>
+            <ListItemText primary={t('projects')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
+          </ListItemButton>
 
-        {isAdmin && (
-          <ListItemButton
-            selected={isUsersPage}
-            onClick={() => handleNav('/users')}
-            sx={{ borderRadius: 2, mb: 0.5 }}
-          >
-            <ListItemIcon sx={{ minWidth: 40 }}><PeopleIcon /></ListItemIcon>
-            <ListItemText primary={t('users')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
-          </ListItemButton>
-        )}
-        {isAdmin && (
-          <ListItemButton
-            selected={isAuditPage}
-            onClick={() => handleNav('/audit-logs')}
-            sx={{ borderRadius: 2, mb: 0.5 }}
-          >
-            <ListItemIcon sx={{ minWidth: 40 }}><HistoryIcon /></ListItemIcon>
-            <ListItemText primary={t('auditLogs', 'Audit Logs')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
-          </ListItemButton>
-        )}
-      </List>
+          {isAdmin && (
+            <ListItemButton
+              selected={isUsersPage}
+              onClick={() => handleNav('/users')}
+              sx={{ borderRadius: 2, mb: 0.5 }}
+            >
+              <ListItemIcon sx={{ minWidth: 40 }}><PeopleIcon /></ListItemIcon>
+              <ListItemText primary={t('users')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
+            </ListItemButton>
+          )}
+          {isAdmin && (
+            <ListItemButton
+              selected={isAuditPage}
+              onClick={() => handleNav('/audit-logs')}
+              sx={{ borderRadius: 2, mb: 0.5 }}
+            >
+              <ListItemIcon sx={{ minWidth: 40 }}><HistoryIcon /></ListItemIcon>
+              <ListItemText primary={t('auditLogs', 'Audit Logs')} primaryTypographyProps={{ fontSize: '0.875rem' }} />
+            </ListItemButton>
+          )}
+        </List>
+      )}
 
       {/* Folder tree when inside a project */}
       {currentProjectId && (

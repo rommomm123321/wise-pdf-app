@@ -1,4 +1,4 @@
-import {
+import React, {
   useState,
   useEffect,
   useRef,
@@ -37,8 +37,12 @@ interface MarkupLayerProps {
       anchor: HTMLElement;
       query: string;
       onSelect: (name: string) => void;
+      cursorPos?: { top: number; left: number };
     } | null,
   ) => void;
+  viewportZoom?: number;
+  onDeselect?: () => void;
+  onSwitchToSelect?: () => void;
 }
 
 export interface MarkupLayerRef {
@@ -289,6 +293,9 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       onMarkupDeleted,
       onContextMenu,
       onCanvasMention,
+      viewportZoom = 1,
+      onDeselect,
+      onSwitchToSelect,
     },
     ref,
   ) => {
@@ -305,6 +312,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
     const isDrawing = useRef(false);
     const isInSync = useRef(false);
     const isProgrammaticSelect = useRef(false);
+    const isDisposing = useRef(false);
     const lastMoveRef = useRef(0);
     const currentObject = useRef<fabric.Object | null>(null);
     const measureLabel = useRef<fabric.Text | null>(null);
@@ -329,6 +337,10 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
     const highlightCanvasRef = useRef<HTMLCanvasElement>(null);
     const isDrawingHighlightRef = useRef(false);
     const highlightPreviewRectRef = useRef<fabric.Rect | null>(null);
+    const imageFileInputRef = useRef<HTMLInputElement>(null);
+    const imageClickPosRef = useRef<{ x: number; y: number } | null>(null);
+    // Callout: ID of a just-drawn callout whose textbox should auto-enter editing once rendered
+    const pendingCalloutEditRef = useRef<string | null>(null);
 
     const pageNumberRef = useRef(pageNumber);
     const toolRef = useRef(tool);
@@ -336,6 +348,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
     const widthRef = useRef(activeStrokeWidth);
     const lineStyleRef = useRef(activeLineStyle);
     const scaleRef = useRef(scale);
+    const uiScaleRef = useRef(1 / viewportZoom);
     const docScaleRef = useRef(docScale);
     const currentUserIdRef = useRef(currentUserId);
     const isAdminRef = useRef(isAdmin);
@@ -345,6 +358,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
     const onMarkupModifiedRef = useRef(onMarkupModified);
     const onMarkupSelectedRef = useRef(onMarkupSelected);
     const onContextMenuRef = useRef(onContextMenu);
+    const onDeselectRef = useRef(onDeselect);
+    const onSwitchToSelectRef = useRef(onSwitchToSelect);
 
     useEffect(() => {
       pageNumberRef.current = pageNumber;
@@ -353,6 +368,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       widthRef.current = activeStrokeWidth;
       lineStyleRef.current = activeLineStyle;
       scaleRef.current = scale;
+      uiScaleRef.current = 1 / (viewportZoom || 1);
       docScaleRef.current = docScale;
       currentUserIdRef.current = currentUserId;
       isAdminRef.current = isAdmin;
@@ -365,12 +381,15 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       onContextMenuRef.current = onContextMenu;
       onMarkupDeletedRef.current = onMarkupDeleted;
       markupsRef.current = markups;
+      onDeselectRef.current = onDeselect;
+      onSwitchToSelectRef.current = onSwitchToSelect;
     }, [
       tool,
       activeColor,
       activeStrokeWidth,
       activeLineStyle,
       scale,
+      viewportZoom,
       docScale,
       currentUserId,
       isAdmin,
@@ -382,6 +401,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       onMarkupSelected,
       onContextMenu,
       onMarkupDeleted,
+      onDeselect,
+      onSwitchToSelect,
       markups,
     ]);
 
@@ -398,7 +419,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       const isSelect = tool === "select" || readOnly;
       const isPen = !readOnly && tool === "pen";
       const isHighlighter = !readOnly && tool === "highlighter";
-      const isDrawing = isPen || isHighlighter;
+      void (isPen || isHighlighter); // used implicitly via canvas.isDrawingMode
 
       // Cursor
       let cursor = "default";
@@ -452,7 +473,6 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         const effectiveLocked = readOnly || locked || !canEdit;
         const isTail = obj.data?.part === 'tail';
         const isHighlight = obj.data?.type === 'highlighter';
-        // Highlights: locked in place (no move, no resize, no rotate) — only selection for deletion
         const fullyLocked = effectiveLocked || isHighlight;
         obj.set({
           selectable: isSelect,
@@ -510,7 +530,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         fireRightClick: true,
         stopContextMenu: true,
         renderOnAddRemove: false,
-        enableRetinaScaling: false,
+        enableRetinaScaling: true,
         allowTouchScrolling: true,
       });
       fabricCanvas.current = canvas;
@@ -522,13 +542,13 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
 
       fabric.Object.prototype.set({
         transparentCorners: false,
-        cornerColor: "#005fb8",
+        cornerColor: "#1565c0",
         cornerStrokeColor: "#ffffff",
-        borderColor: "#005fb8",
-        cornerSize: 8,
-        borderScaleFactor: 2,
-        padding: 5,
-        cornerStyle: "rect",
+        borderColor: "rgba(21,101,192,0.7)",
+        cornerSize: 10,
+        borderScaleFactor: 1.5,
+        padding: 6,
+        cornerStyle: "circle",
       });
 
       const canvasElement = canvas.getElement();
@@ -586,7 +606,23 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             canvas.requestRenderAll();
           }
         }
-        if (["select", "pan", "pen"].includes(toolRef.current)) return;
+        if (["select", "pan", "pen"].includes(toolRef.current)) {
+          // In select mode: if clicked on empty canvas (no target), fire onDeselect
+          if (toolRef.current === 'select') {
+            const target = canvas.findTarget(opt.e as MouseEvent, false) as any;
+            if (!target && !vertexEditMarkupId.current) {
+              onDeselectRef.current?.();
+            }
+          }
+          return;
+        }
+        // Image tool: click to open file picker
+        if (toolRef.current === 'image') {
+          const pointer = canvas.getPointer(opt.e);
+          imageClickPosRef.current = { x: pointer.x, y: pointer.y };
+          imageFileInputRef.current?.click();
+          return;
+        }
         // Rect-based highlighter — Bluebeam style: drag to create rectangle
         if (toolRef.current === "highlighter") {
           isDrawingHighlightRef.current = true;
@@ -617,8 +653,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           );
           measureLabel.current = new fabric.Text("0", {
             left: pointer.x,
-            top: pointer.y - 15 * scaleRef.current,
-            fontSize: 14 * scaleRef.current,
+            top: pointer.y - 15 * uiScaleRef.current,
+            fontSize: 14 * uiScaleRef.current,
             fill: colorRef.current,
             fontFamily: "Arial",
             originX: "center",
@@ -646,19 +682,19 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           return;
         }
 
-        // ─── Polyline: click to add points, dblclick to finish ───
-        if (toolRef.current === "polyline") {
+        // ─── Polyline / Route Template: click to add points, dblclick to finish ───
+        if (toolRef.current === "polyline" || toolRef.current === "routeTemplate") {
           const pointer = canvas.getPointer(opt.e);
           if (polylinePoints.current.length === 0) {
             // First point — start polyline
             polylinePoints.current = [{ x: pointer.x, y: pointer.y }];
             polylinePreviewLine.current = new fabric.Line(
               [pointer.x, pointer.y, pointer.x, pointer.y],
-              { stroke: colorRef.current, strokeWidth: widthRef.current, strokeDashArray: getDashArray(lineStyleRef.current), selectable: false, evented: false },
+              { stroke: colorRef.current, strokeWidth: widthRef.current, strokeDashArray: getDashArray(lineStyleRef.current), strokeLineCap: 'round', strokeLineJoin: 'round', selectable: false, evented: false },
             );
             polylineLengthLabel.current = new fabric.Text("0", {
-              left: pointer.x, top: pointer.y - 15 * scaleRef.current,
-              fontSize: 14 * scaleRef.current, fill: colorRef.current, fontFamily: "Arial",
+              left: pointer.x, top: pointer.y - 15 * uiScaleRef.current,
+              fontSize: 14 * uiScaleRef.current, fill: colorRef.current, fontFamily: "Arial",
               originX: "center", originY: "bottom", selectable: false, evented: false,
               textBackgroundColor: "rgba(255,255,255,0.7)",
             });
@@ -668,7 +704,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             const prevPt = polylinePoints.current[polylinePoints.current.length - 1];
             const seg = new fabric.Line(
               [prevPt.x, prevPt.y, pointer.x, pointer.y],
-              { stroke: colorRef.current, strokeWidth: widthRef.current, strokeDashArray: getDashArray(lineStyleRef.current), selectable: false, evented: false },
+              { stroke: colorRef.current, strokeWidth: widthRef.current, strokeDashArray: getDashArray(lineStyleRef.current), strokeLineCap: 'round', strokeLineJoin: 'round', selectable: false, evented: false },
             );
             polylineLines.current.push(seg);
             canvas.add(seg);
@@ -760,7 +796,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
 
       canvas.on("mouse:move", (opt: any) => {
         // Polyline preview — independent of isDrawing
-        if (toolRef.current === "polyline" && polylinePoints.current.length > 0 && polylinePreviewLine.current) {
+        if ((toolRef.current === "polyline" || toolRef.current === "routeTemplate") && polylinePoints.current.length > 0 && polylinePreviewLine.current) {
           const pointer = canvas.getPointer(opt.e);
           polylinePreviewLine.current.set({ x2: pointer.x, y2: pointer.y });
           // Calculate total drawn length + current preview segment
@@ -773,7 +809,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           const pdx = pointer.x - pts[pts.length-1].x, pdy = pointer.y - pts[pts.length-1].y;
           totalPx += Math.sqrt(pdx*pdx + pdy*pdy);
           const { text: lenText } = formatMeasurement(totalPx / scaleRef.current, docScaleRef.current);
-          polylineLengthLabel.current?.set({ text: lenText, left: pointer.x, top: pointer.y - 15 * scaleRef.current });
+          polylineLengthLabel.current?.set({ text: lenText, left: pointer.x, top: pointer.y - 15 * uiScaleRef.current });
           canvas.requestRenderAll();
           return;
         }
@@ -848,7 +884,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 uy = dy / len,
                 nx = -uy,
                 ny = ux,
-                tL = 6 * scaleRef.current;
+                tL = 6 * uiScaleRef.current;
               measureTicks.current[0].set({
                 x1: startPos.current.x - nx * tL,
                 y1: startPos.current.y - ny * tL,
@@ -1058,7 +1094,16 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               y2: line.y2! / h,
             };
           }
+          // Pre-register the drawn object in cache with a new ID to avoid flash.
+          // When Yjs syncs, the sync loop finds the object and just updates the hash.
+          const pendingId = crypto.randomUUID();
+          (obj as any).data = { ...(obj as any).data, id: pendingId, type: toolRef.current, _justCreated: true };
+          objectCache.current.set(pendingId, obj);
+          // Make selectable (select tool will be active after drawing)
+          obj.set({ selectable: true, evented: true });
+          currentObject.current = null;
           onMarkupAddedRef.current?.({
+            id: pendingId,
             type: toolRef.current,
             pageNumber: pageNumberRef.current,
             coordinates: coords,
@@ -1085,11 +1130,18 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 textColor: '#000000',
                 fontSize: 14,
                 textBoxFill: '#ffffff',
+                textBoxStroke: colorRef.current,
               } : {}),
             },
           });
-          canvas.remove(obj);
-          currentObject.current = null;
+          // Auto-switch to select after drawing callout/cloud; for callout also queue auto-edit
+          if (toolRef.current === 'callout') {
+            pendingCalloutEditRef.current = pendingId;
+            setTimeout(() => onSwitchToSelectRef.current?.(), 50);
+          }
+          if (toolRef.current === 'cloud') {
+            setTimeout(() => onSwitchToSelectRef.current?.(), 50);
+          }
         }
         startPos.current = null;
       });
@@ -1118,11 +1170,18 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           const dx = (pts[i].x - pts[i-1].x) / s, dy = (pts[i].y - pts[i-1].y) / s;
           pathLength += Math.sqrt(dx*dx + dy*dy);
         }
+        const isRouteTemplate = toolRef.current === "routeTemplate";
         onMarkupAddedRef.current?.({
-          type: "polyline",
+          type: isRouteTemplate ? "routeTemplate" : "polyline",
           pageNumber: pageNumberRef.current,
           coordinates: { points: normalizedPoints },
-          properties: {
+          properties: isRouteTemplate ? {
+            stroke: '#9e9e9e',
+            strokeWidth: 1,
+            lineStyle: 'dashed',
+            showLength: false,
+            pathLength,
+          } : {
             stroke: colorRef.current,
             strokeWidth: widthRef.current,
             lineStyle: lineStyleRef.current,
@@ -1181,8 +1240,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         pts.forEach((pt, i) => {
           const circle = new fabric.Circle({
             left: pt.x, top: pt.y,
-            radius: 6 * scaleRef.current, fill: 'white', stroke: '#2196F3',
-            strokeWidth: 2 * scaleRef.current,
+            radius: 6 * uiScaleRef.current, fill: 'white', stroke: '#2196F3',
+            strokeWidth: 2 * uiScaleRef.current,
             originX: 'center', originY: 'center',
             selectable: true, evented: true, hasBorders: false, hasControls: false,
             lockRotation: true,
@@ -1195,8 +1254,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       };
 
       canvas.on("mouse:dblclick", (opt: any) => {
-        // Polyline drawing finalize
-        if (toolRef.current === "polyline" && polylinePoints.current.length >= 1) {
+        // Polyline / Route Template drawing finalize
+        if ((toolRef.current === "polyline" || toolRef.current === "routeTemplate") && polylinePoints.current.length >= 1) {
           // The dblclick fires after mouse:down already added the last point; remove it
           if (polylineLines.current.length > 0) {
             const lastSeg = polylineLines.current.pop();
@@ -1206,11 +1265,26 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           finalizePolyline();
           return;
         }
-        // Enter vertex edit on polyline double-click in select mode
         if (toolRef.current === "select") {
           const target = canvas.findTarget(opt.e, false) as any;
-          if (target?.data?.type === "polyline") {
-            const markup = markupsRef.current.find((m: any) => m.id === target.data.id);
+          const markupId = target?.data?.id;
+
+          // Callout: double-click anywhere on it → enter text editing in the textbox
+          if (target?.data?.type === "callout" && markupId) {
+            const textboxObj = calloutTailCache.current.get(markupId) as any;
+            if (textboxObj && textboxObj.data?.part === 'textbox' && textboxObj.editable !== false) {
+              canvas.discardActiveObject();
+              canvas.setActiveObject(textboxObj);
+              textboxObj.enterEditing?.();
+              textboxObj.selectAll?.();
+              canvas.requestRenderAll();
+              return;
+            }
+          }
+
+          // Polyline / Route types: enter vertex edit
+          if (target?.data?.type === "polyline" || target?.data?.type === "routeTemplate" || target?.data?.type === "route") {
+            const markup = markupsRef.current.find((m: any) => m.id === markupId);
             if (markup) enterVertexEdit(target, markup);
           }
         }
@@ -1270,8 +1344,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               const { text: lt } = formatMeasurement(totalDist, docScaleRef.current);
               const midPt = pts[Math.floor(pts.length / 2)];
               const lbl = new fabric.Text(lt, {
-                left: midPt.x, top: midPt.y - 15 * scaleRef.current,
-                fontSize: 14 * scaleRef.current, fill: stroke, fontFamily: 'Arial',
+                left: midPt.x, top: midPt.y - 15 * uiScaleRef.current,
+                fontSize: 14 * uiScaleRef.current, fill: stroke, fontFamily: 'Arial',
                 originX: 'center', originY: 'bottom', selectable: false, evented: false,
                 textBackgroundColor: 'rgba(255,255,255,0.7)',
               });
@@ -1289,8 +1363,26 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           canvas.requestRenderAll();
           return;
         }
+        // Multi-select: lock bypass fix — restore locked object positions each tick
+        if (obj?.type === 'activeSelection') {
+          const sel = obj as fabric.ActiveSelection;
+          sel.getObjects().forEach((child: any) => {
+            if (!child.data?.id) return;
+            const childLocked = !!child.data?.locked;
+            const childCanEdit = child.data?.canEdit !== false;
+            if (childLocked || !childCanEdit) {
+              if (child._lockedLeft !== undefined) {
+                child.set({ left: child._lockedLeft, top: child._lockedTop });
+                child.setCoords();
+              }
+            }
+          });
+          canvas.requestRenderAll();
+          return;
+        }
+
         if (!obj?.data?.id) return;
-        
+
         // Mark as moving to prevent incoming sync from disrupting the local drag
         obj.isMoving = true;
         
@@ -1373,8 +1465,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             const cloudBrLogical = {
               left: (od._cloudOrigLeft ?? obj.left! - (obj.width||0)/2) + dx2,
               top: (od._cloudOrigTop ?? obj.top! - (obj.height||0)/2) + dy2,
-              width: od._cloudOrigWidth ?? obj.width! ?? 100,
-              height: od._cloudOrigHeight ?? obj.height! ?? 100,
+              width: (od._cloudOrigWidth ?? obj.width! ?? 100) * (obj.scaleX || 1),
+              height: (od._cloudOrigHeight ?? obj.height! ?? 100) * (obj.scaleY || 1),
             };
             if (lineObj && tailObj) {
               let tx: number, ty: number;
@@ -1476,7 +1568,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             height: (obj.height! * (obj.scaleY || 1)) / h,
             angle: obj.angle || 0,
           };
-        } else if (type === 'polyline') {
+        } else if (type === 'polyline' || type === 'routeTemplate' || type === 'route') {
           // Polyline group movement: apply delta to stored normalized points
           const dx = obj.left! - (obj.data?._lastLeft ?? obj.left!);
           const dy = obj.top! - (obj.data?._lastTop ?? obj.top!);
@@ -1498,6 +1590,13 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
 
       canvas.on("object:modified", (opt: any) => {
         const obj = opt.target;
+        // Clear stored lock positions after any drag ends
+        if (obj?.type === 'activeSelection') {
+          (obj as fabric.ActiveSelection).getObjects().forEach((child: any) => {
+            delete child._lockedLeft;
+            delete child._lockedTop;
+          });
+        }
         // Vertex handle released — save immediately (stay in vertex edit mode)
         if (obj?.data?.isVertexHandle) {
           const markupId = vertexEditMarkupId.current;
@@ -1529,7 +1628,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           const bgObj = calloutTextboxBgCache.current.get(markupId);
 
           if (part === 'textbox') {
-            const tbW = obj.width! * (obj.scaleX || 1), tbH = (obj as any).height || 50;
+            const tbW = obj.width! * (obj.scaleX || 1), tbH = ((obj as any).height || 50) * (obj.scaleY || 1);
             if (bgObj) { bgObj.set({ left: obj.left, top: obj.top, width: tbW, height: tbH }); bgObj.setCoords(); }
             if (lineObj && cloudObj) {
               const cd = (cloudObj as any).data || {};
@@ -1571,15 +1670,15 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               coords = { cloud: {}, tail: { x: obj.left!/w, y: obj.top!/h } };
             }
           } else {
-            // Cloud moved — use stored original dims to avoid grow-on-move bug
+            // Cloud moved or scaled — use stored original dims + current scale
             const od = obj.data || {};
             const dx2 = obj.left! - (od._lastLeft ?? obj.left!);
             const dy2 = obj.top! - (od._lastTop ?? obj.top!);
             const cloudBrLogical = {
               left: (od._cloudOrigLeft ?? obj.left! - (obj.width||0)/2) + dx2,
               top: (od._cloudOrigTop ?? obj.top! - (obj.height||0)/2) + dy2,
-              width: od._cloudOrigWidth ?? obj.width! ?? 100,
-              height: od._cloudOrigHeight ?? obj.height! ?? 100,
+              width: (od._cloudOrigWidth ?? obj.width! ?? 100) * (obj.scaleX || 1),
+              height: (od._cloudOrigHeight ?? obj.height! ?? 100) * (obj.scaleY || 1),
             };
             if (lineObj && tailObj) {
               let tx: number, ty: number;
@@ -1670,7 +1769,33 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             angle: obj.angle || 0,
             width: (obj.width! * (obj.scaleX || 1)) / w,
           };
-        } else if (["pen", "highlighter"].includes(type)) {
+        } else if (type === 'highlighter') {
+          // Highlights are locked — never persist a moved position.
+          // After being in an ActiveSelection drag, Fabric shifts the object's coords.
+          // Restore from markupsRef to fix hit area.
+          const orig = markupsRef.current?.find((m: any) => m.id === obj.data.id);
+          if (orig?.coordinates) {
+            const oc = orig.coordinates;
+            obj.set({
+              left: (oc.left ?? 0) * w,
+              top: (oc.top ?? 0) * h,
+              scaleX: oc.width != null ? (oc.width * w) / (obj.width || 1) : (obj.scaleX || 1),
+              scaleY: oc.height != null ? (oc.height * h) / (obj.height || 1) : (obj.scaleY || 1),
+              angle: oc.angle ?? 0,
+            });
+            obj.setCoords();
+            canvas.requestRenderAll();
+          }
+          return;
+        } else if (type === 'image') {
+          coords = {
+            left: obj.left! / w,
+            top: obj.top! / h,
+            width: (obj.width! * (obj.scaleX || 1)) / w,
+            height: (obj.height! * (obj.scaleY || 1)) / h,
+            angle: obj.angle || 0,
+          };
+        } else if (type === 'pen') {
           coords = {
             ...obj.data.coordinates,
             left: obj.left / w,
@@ -1679,7 +1804,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             height: (obj.height! * (obj.scaleY || 1)) / h,
             angle: obj.angle || 0,
           };
-        } else if (type === 'polyline') {
+        } else if (type === 'polyline' || type === 'routeTemplate' || type === 'route') {
           const angleRad = ((obj.angle || 0) * Math.PI) / 180;
           const markup = markupsRef.current?.find((m: any) => m.id === obj.data.id);
           const originalPts: { x: number; y: number }[] = markup?.coordinates?.points || [];
@@ -1718,6 +1843,21 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         onMarkupModifiedRef.current?.({ id: obj.data.id, type, coordinates: coords });
       });
 
+      // Store locked-object positions at transform start so we can freeze them during drag
+      canvas.on('before:transform', (opt: any) => {
+        const obj = opt.transform?.target;
+        if (obj?.type === 'activeSelection') {
+          (obj as fabric.ActiveSelection).getObjects().forEach((child: any) => {
+            const childLocked = !!child.data?.locked;
+            const childCanEdit = child.data?.canEdit !== false;
+            if (childLocked || !childCanEdit) {
+              child._lockedLeft = child.left;
+              child._lockedTop = child.top;
+            }
+          });
+        }
+      });
+
       canvas.on("selection:created", (e: any) => {
         if (!isProgrammaticSelect.current && !isInSync.current)
           onMarkupSelectedRef.current?.(
@@ -1735,7 +1875,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         // Primary vertex edit exit is handled in mouse:down (more reliable than selection:cleared
         // which fires spuriously after drags and when hiding the group in enterVertexEdit).
         // No exitVertexEdit here.
-        if (!isInSync.current && !isProgrammaticSelect.current)
+        // Skip when disposing — prevents cross-page clipboard being cleared on page navigation.
+        if (!isInSync.current && !isProgrammaticSelect.current && !isDisposing.current)
           onMarkupSelectedRef.current?.([]);
       });
 
@@ -1743,6 +1884,28 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       canvas.on("text:changed", (e: any) => {
         const obj = e.target;
         if (!obj || obj.type !== "textbox") return;
+        // Sync callout bg rect height as text grows
+        if (obj.data?.type === 'callout' && obj.data?.part === 'textbox') {
+          const bgObj = calloutTextboxBgCache.current.get(obj.data.id);
+          const autoH = (obj as any).height || 40;
+          if (bgObj) {
+            bgObj.set({ left: obj.left, top: obj.top, width: obj.width! * (obj.scaleX || 1), height: autoH });
+            bgObj.setCoords();
+          }
+          // Update connector line endpoint to textbox center
+          const lineObj = calloutLineCache.current.get(obj.data.id);
+          const cloudObj = objectCache.current.get(obj.data.id);
+          if (lineObj && cloudObj) {
+            const tbCx = obj.left! + (obj.width! * (obj.scaleX || 1)) / 2;
+            const tbCy = obj.top! + autoH / 2;
+            const cd = (cloudObj as any).data || {};
+            const cloudBrLogical = { left: cd._cloudOrigLeft ?? 0, top: cd._cloudOrigTop ?? 0, width: (cd._cloudOrigWidth ?? 100) * (cloudObj.scaleX || 1), height: (cd._cloudOrigHeight ?? 100) * (cloudObj.scaleY || 1) };
+            const ep = cloudEdgePoint(cloudBrLogical, tbCx, tbCy);
+            (lineObj as fabric.Line).set({ x1: ep.x, y1: ep.y, x2: tbCx, y2: tbCy });
+            lineObj.setCoords();
+          }
+          canvas.requestRenderAll();
+        }
         const text: string = obj.text || "";
         const cursorPos: number = obj.selectionStart ?? text.length;
         const textBefore = text.substring(0, cursorPos);
@@ -1784,9 +1947,9 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         if (obj.data.type === 'callout') {
           const cloudObj = objectCache.current.get(obj.data.id);
           const cloudBr = cloudObj?.getBoundingRect(true);
-          const tbW = obj.width! * (obj.scaleX || 1), tbH = (obj as any).height || 50;
+          const tbW = obj.width! * (obj.scaleX || 1);
+          const tbH = (obj as any).height || 50; // auto-height from Fabric
           const textBoxCoords = { left: obj.left!/w, top: obj.top!/h, width: tbW/w, height: tbH/h };
-          // Sync bg height after text may have changed the textbox height
           const bgObj = calloutTextboxBgCache.current.get(obj.data.id);
           if (bgObj) { bgObj.set({ left: obj.left, top: obj.top, width: tbW, height: tbH }); bgObj.setCoords(); }
           onMarkupModifiedRef.current?.({
@@ -1816,6 +1979,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         wrapper?.removeEventListener('pointermove', handlePressure as EventListener);
         wrapper?.removeEventListener('pointerup', handlePressureEnd as EventListener);
         if (fabricCanvas.current) {
+          isDisposing.current = true;
           fabricCanvas.current.dispose();
           fabricCanvas.current = null;
           objectCache.current.clear();
@@ -1927,6 +2091,14 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
 
           if (cache.has(m.id)) {
             const obj = cache.get(m.id)!;
+            // Object was just drawn locally — accept Yjs data without recreation
+            if ((obj as any)._justCreated) {
+              (obj as any)._justCreated = false;
+              hashes.set(m.id, newHash);
+              (obj as any).data = { ...(obj as any).data, canEdit, locked: !!props.locked };
+              obj.set({ selectable: isSelect, evented: isSelect, lockMovementX: effectiveLocked, lockMovementY: effectiveLocked, lockRotation: effectiveLocked, lockScalingX: effectiveLocked, lockScalingY: effectiveLocked, hasControls: !effectiveLocked });
+              continue;
+            }
             if (hashes.get(m.id) === newHash) {
               obj.set({
                 selectable: isSelect,
@@ -1946,11 +2118,11 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                   const isPart = (tailObj as any).data?.part;
                   if (isPart === 'textbox') {
                     tailObj.set({
-                      selectable: isSelect && !effectiveLocked,
-                      evented: isSelect,
+                      selectable: !effectiveLocked,
+                      evented: true,
                       lockMovementX: effectiveLocked,
                       lockMovementY: effectiveLocked,
-                      editable: isSelect && canEdit && !effectiveLocked,
+                      editable: canEdit && !effectiveLocked,
                     } as any);
                   } else {
                     tailObj.set({
@@ -2026,7 +2198,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               const textboxBg = new fabric.Rect({
                 left: tbLeft, top: tbTop, width: tbWidth, height: tbHeight,
                 fill: props.textBoxFill || '#ffffff',
-                stroke, strokeWidth, strokeDashArray: dash,
+                stroke: props.textBoxStroke || stroke, strokeWidth, strokeDashArray: dash,
                 selectable: false, evented: false,
                 originX: 'left', originY: 'top',
               });
@@ -2038,6 +2210,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               const textboxObj = new fabric.Textbox(props.text || '', {
                 left: tbLeft + strokeWidth, top: tbTop + strokeWidth,
                 width: Math.max(10, tbWidth - strokeWidth * 2),
+                height: tbHeight - strokeWidth * 2,
                 fontSize: (props.fontSize || 14) * s,
                 fill: props.textColor || '#000000',
                 fontFamily: props.fontFamily || 'Arial',
@@ -2046,20 +2219,35 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 backgroundColor: '',
                 stroke: 'transparent',
                 strokeWidth: 0,
-                editable: isSelect && canEdit && !effectiveLocked,
+                editable: canEdit && !effectiveLocked,
+                splitByGrapheme: false,
               });
               textboxObj.set('data', { id: m.id, type: 'callout', part: 'textbox', canEdit });
               textboxObj.set({
-                selectable: isSelect && !effectiveLocked,
-                evented: isSelect,
+                selectable: !effectiveLocked,
+                evented: true,
                 lockMovementX: effectiveLocked,
                 lockMovementY: effectiveLocked,
                 hasControls: !effectiveLocked,
                 lockRotation: true,
-                lockScalingY: true,
+                lockScalingY: effectiveLocked,
+                lockScalingX: effectiveLocked,
+                lockScalingFlip: true,
               });
               canvas.add(textboxObj);
               calloutTailCache.current.set(m.id, textboxObj);
+
+              // Auto-enter text editing if this callout was just drawn
+              if (pendingCalloutEditRef.current === m.id) {
+                pendingCalloutEditRef.current = null;
+                requestAnimationFrame(() => {
+                  if (!fabricCanvas.current || !textboxObj.canvas) return;
+                  fabricCanvas.current.setActiveObject(textboxObj);
+                  (textboxObj as any).enterEditing?.();
+                  (textboxObj as any).selectAll?.();
+                  fabricCanvas.current.requestRenderAll();
+                });
+              }
 
               // Cloud shape (stored in objectCache as main object)
               obj = new fabric.Path(
@@ -2236,7 +2424,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               groupItems.push(new fabric.Triangle({ left: x1, top: y1, width: arrowSize, height: arrowSize, fill: stroke, originX: 'center', originY: 'center', angle: angle - 90 }));
             }
             obj = new fabric.Group(groupItems);
-          } else if (m.type === "polyline") {
+          } else if (m.type === "polyline" || m.type === "routeTemplate" || m.type === "route") {
             const pts = (coords.points || []) as { x: number; y: number }[];
             if (pts.length >= 2) {
               const canvasPts = pts.map((p: any) => ({ x: p.x * w, y: p.y * h }));
@@ -2247,7 +2435,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 totalDist += Math.sqrt(ddx*ddx + ddy*ddy) / s;
                 segments.push(new fabric.Line(
                   [canvasPts[i-1].x, canvasPts[i-1].y, canvasPts[i].x, canvasPts[i].y],
-                  { stroke, strokeWidth, strokeDashArray: dash },
+                  { stroke, strokeWidth, strokeDashArray: dash, strokeLineCap: 'round', strokeLineJoin: 'round' },
                 ));
               }
               // Label at midpoint vertex (only when showLength !== false)
@@ -2270,9 +2458,10 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           } else if (["pen", "highlighter"].includes(m.type)) {
             if (coords.path) {
               // Legacy freehand path (pen or old-style highlight)
+              const isHighlightPath = m.type === 'highlighter';
               obj = new fabric.Path(coords.path, {
                 fill: "transparent",
-                stroke,
+                stroke: isHighlightPath ? "transparent" : stroke,
                 strokeWidth,
                 strokeDashArray: dash,
                 left: coords.left * w,
@@ -2282,20 +2471,20 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 origH = props.originalHeight || h;
               obj.set({ scaleX: w / origW, scaleY: h / origH });
             } else if (coords.width !== undefined && coords.height !== undefined) {
-              // Rect-based highlight (Bluebeam style)
+              // Rect-based highlight — visible semi-transparent rect, fully interactive
+              const hlFill = stroke && stroke !== 'transparent'
+                ? hexToRgba(stroke, 0.35)
+                : 'rgba(255,235,59,0.35)';
               obj = new fabric.Rect({
                 left: coords.left * w,
                 top: coords.top * h,
                 width: coords.width * w,
                 height: coords.height * h,
-                fill: 'transparent',
+                fill: 'rgba(0,0,0,0.001)', // Near-transparent: ensures Fabric hit-test detects drag; visual rendering is via highlightCanvasRef
                 stroke: 'transparent',
                 strokeWidth: 0,
+                perPixelTargetFind: false,
               });
-            }
-            if (m.type === "highlighter" && obj) {
-              // Rendered on the separate raw canvas; keep in Fabric at opacity 0 so handles work
-              obj.set({ opacity: 0 });
             }
           } else if (m.type === "text") {
             const borderColor = props.stroke && props.stroke !== 'transparent' ? props.stroke : (props.borderColor || null);
@@ -2334,6 +2523,45 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               textBorderCache.current.set(m.id, bRect);
             }
           }
+          // Image markup — async load, handled separately
+          if (m.type === 'image' && props.imageData) {
+            const imgLeft = (coords.left || 0) * w;
+            const imgTop = (coords.top || 0) * h;
+            const imgW = (coords.width || 0.2) * w;
+            const imgH = (coords.height || 0.2) * h;
+            const mId = m.id;
+            hashes.set(mId, newHash);
+            fabric.Image.fromURL(props.imageData, (imgObj: fabric.Image) => {
+              if (!fabricCanvas.current || isDisposing.current) return;
+              const c2 = fabricCanvas.current;
+              // Remove previous if still present (hash changed path)
+              const prev2 = cache.get(mId);
+              if (prev2) { c2.remove(prev2); cache.delete(mId); }
+              imgObj.set({
+                left: imgLeft,
+                top: imgTop,
+                scaleX: imgW / (imgObj.width || 1),
+                scaleY: imgH / (imgObj.height || 1),
+                originX: 'left',
+                originY: 'top',
+                selectable: isSelect,
+                evented: isSelect,
+                lockMovementX: effectiveLocked,
+                lockMovementY: effectiveLocked,
+                lockRotation: effectiveLocked,
+                lockScalingX: effectiveLocked,
+                lockScalingY: effectiveLocked,
+                hasControls: !effectiveLocked,
+              });
+              if (coords.angle !== undefined) imgObj.angle = coords.angle;
+              (imgObj as any).data = { id: mId, type: 'image', canEdit };
+              c2.add(imgObj);
+              cache.set(mId, imgObj);
+              c2.requestRenderAll();
+            }, { crossOrigin: 'anonymous' });
+            continue;
+          }
+
           if (obj) {
             if (coords.angle !== undefined) obj.angle = coords.angle;
             // Store original cloud logical bounds so movement handlers can compute
@@ -2586,6 +2814,63 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           }}
         />
         <canvas ref={canvasRef} />
+        <input
+          ref={imageFileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file || !fabricCanvas.current) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const dataURL = ev.target?.result as string;
+              if (!dataURL || !fabricCanvas.current) return;
+              const canvas = fabricCanvas.current;
+              const w = canvas.getWidth(), h = canvas.getHeight();
+              const clickPos = imageClickPosRef.current || { x: w / 2, y: h / 2 };
+              fabric.Image.fromURL(dataURL, (imgObj: fabric.Image) => {
+                if (!fabricCanvas.current || isDisposing.current) return;
+                const c = fabricCanvas.current;
+                const maxW = w * 0.4;
+                const maxH = h * 0.4;
+                const natW = imgObj.width || 200;
+                const natH = imgObj.height || 200;
+                const scale = Math.min(maxW / natW, maxH / natH, 1);
+                const iw = natW * scale;
+                const ih = natH * scale;
+                const left = clickPos.x - iw / 2;
+                const top = clickPos.y - ih / 2;
+                imgObj.set({
+                  left, top,
+                  scaleX: scale,
+                  scaleY: scale,
+                  originX: 'left',
+                  originY: 'top',
+                  selectable: true,
+                  evented: true,
+                });
+                const pendingId = crypto.randomUUID();
+                (imgObj as any).data = { id: pendingId, type: 'image', _justCreated: true };
+                objectCache.current.set(pendingId, imgObj);
+                c.add(imgObj);
+                c.setActiveObject(imgObj);
+                c.requestRenderAll();
+                onMarkupAddedRef.current?.({
+                  id: pendingId,
+                  type: 'image',
+                  pageNumber: pageNumberRef.current,
+                  coordinates: { left: left / w, top: top / h, width: iw / w, height: ih / h },
+                  properties: { imageData: dataURL },
+                });
+                onSwitchToSelectRef.current?.();
+              }, { crossOrigin: 'anonymous' });
+            };
+            reader.readAsDataURL(file);
+            // Reset so same file can be picked again
+            e.target.value = '';
+          }}
+        />
         {vertexMenu && createPortal(
           <>
             <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setVertexMenu(null)} />
@@ -2622,4 +2907,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
 );
 
 MarkupLayer.displayName = "MarkupLayer";
-export default MarkupLayer;
+
+// PERF-15: React.memo — skip re-render when parent (MarkupOverlay) updates but this page's props are unchanged
+const MemoizedMarkupLayer = React.memo(MarkupLayer);
+MemoizedMarkupLayer.displayName = "MemoizedMarkupLayer";
+export default MemoizedMarkupLayer;

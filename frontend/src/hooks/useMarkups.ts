@@ -36,8 +36,9 @@ export function useMarkups(documentId: string | undefined) {
     if (!ydocs[documentId]) {
       const doc = new Y.Doc();
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // In development, Vite proxy handles /api, but WebSocket usually needs direct port 3000
-      const host = window.location.hostname === 'localhost' ? 'localhost:3000' : window.location.host;
+      // Always use the current host — in dev Vite proxies /yjs → backend:3000,
+      // in production Express serves both HTTP and WS on the same port.
+      const host = window.location.host;
       const fullWsUrl = `${protocol}//${host}/yjs`;
       
       console.log(`[Yjs] Connecting to ${fullWsUrl}/${documentId}?token=...`);

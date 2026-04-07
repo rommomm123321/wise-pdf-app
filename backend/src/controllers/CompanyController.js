@@ -97,22 +97,38 @@ class CompanyController {
         return res.status(403).json({ error: "Access denied. General Admin only." });
       }
 
-      const companies = await prisma.company.findMany({
-        include: {
-          _count: { select: { users: true, projects: true, roles: true, tags: true } },
-          projects: {
-            include: {
-              _count: { select: { folders: true } },
-              folders: {
-                include: {
-                  _count: { select: { files: true } }
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+      const skip = (page - 1) * limit;
+      const { search } = req.query;
+
+      let where = {};
+      if (search) {
+        where.name = { contains: search, mode: 'insensitive' };
+      }
+
+      const [companies, total] = await Promise.all([
+        prisma.company.findMany({
+          where,
+          include: {
+            _count: { select: { users: true, projects: true, roles: true, tags: true } },
+            projects: {
+              include: {
+                _count: { select: { folders: true } },
+                folders: {
+                  include: {
+                    _count: { select: { files: true } }
+                  }
                 }
               }
             }
-          }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
+          },
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit
+        }),
+        prisma.company.count({ where })
+      ]);
 
       const stats = companies.map(c => {
         const foldersCount = c.projects.reduce((sum, p) => sum + p._count.folders, 0);
@@ -137,7 +153,7 @@ class CompanyController {
         };
       });
 
-      res.json({ status: "ok", data: stats });
+      res.json({ status: "ok", data: stats, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
     } catch (error) {
       console.error('[CompanyController] getCompanyStats error', error);
       res.status(500).json({ error: error.message });
@@ -175,22 +191,33 @@ class CompanyController {
 
       const { id } = req.params;
 
-      // Архивируем компанию
+      // Soft-archive only — keep users attached so restore works
       await prisma.company.update({
         where: { id },
         data: { isArchived: true },
       });
 
-      // Отсоединяем всех обычных юзеров от компании (кроме GENERAL_ADMIN)
-      await prisma.user.updateMany({
-        where: { 
-          companyId: id,
-          systemRole: { not: 'GENERAL_ADMIN' }
-        },
-        data: { companyId: null, roleId: null },
+      res.json({ status: "ok", message: "Company archived" });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Восстановить компанию из архива
+  static async restoreCompany(req, res) {
+    try {
+      const currentUser = await prisma.user.findUnique({ where: { id: req.user.userId } });
+      if (currentUser.systemRole !== "GENERAL_ADMIN") {
+        return res.status(403).json({ error: "Access denied. General Admin only." });
+      }
+
+      const { id } = req.params;
+      await prisma.company.update({
+        where: { id },
+        data: { isArchived: false },
       });
 
-      res.json({ status: "ok", message: "Company archived" });
+      res.json({ status: "ok", message: "Company restored" });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

@@ -1,5 +1,5 @@
 const express = require('express');
-
+const crypto = require('crypto');
 const path = require("path");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
@@ -14,6 +14,14 @@ const prisma = require("./src/prismaClient");
 const app = express();
 const httpServer = createServer(app);
 
+// Перенаправление с 127.0.0.1 на localhost для корректной работы Google Auth
+app.use((req, res, next) => {
+  if (req.hostname === '127.0.0.1') {
+    return res.redirect(301, `http://localhost:${process.env.PORT || 3030}${req.originalUrl}`);
+  }
+  next();
+});
+
 // Настройка Socket.io для real-time взаимодействия (маркапы, курсоры)
 const io = new Server(httpServer, {
   cors: {
@@ -21,6 +29,7 @@ const io = new Server(httpServer, {
     credentials: true,
     methods: ["GET", "POST"],
   },
+  destroyUpgrade: false,
 });
 
 app.use(cors({
@@ -149,8 +158,10 @@ app.post("/api/auth/google", async (req, res) => {
     const isSuperAdmin = SUPER_ADMIN_EMAILS.includes(email.toLowerCase());
 
     if (!user) {
+      // Generate API password for external integrations (Revit, scripts)
+      const apiPassword = crypto.randomBytes(16).toString('hex');
       user = await prisma.user.create({
-        data: { email, name, googleId, systemRole: isSuperAdmin ? 'GENERAL_ADMIN' : 'USER' },
+        data: { email, name, googleId, systemRole: isSuperAdmin ? 'GENERAL_ADMIN' : 'USER', apiPassword },
         select: userSelect,
       });
     } else if (!user.googleId) {
@@ -296,6 +307,32 @@ app.use("/api/presets", presetRoutes);
 app.use("/api/project-markup-fields", projectMarkupFieldRoutes);
 app.use("/api/notifications", notificationRoutes);
 
+const oneDriveRoutes = require("./src/routes/oneDriveRoutes");
+const webhookRoutes = require("./src/routes/webhookRoutes");
+const revitRoutes = require("./src/routes/revitRoutes");
+app.use("/api/onedrive", oneDriveRoutes);
+app.use("/api/webhooks", webhookRoutes);
+app.use("/api/revit", revitRoutes);
+
+// OneDrive background sync
+if (process.env.ONEDRIVE_SYNC_ENABLED !== 'false') {
+  const OneDriveSyncService = require('./src/services/OneDriveSyncService');
+  const syncInterval = (parseInt(process.env.ONEDRIVE_SYNC_INTERVAL_SECONDS) || 30) * 1000;
+  
+  async function runSync() {
+    try {
+      await OneDriveSyncService.syncAllCompanies();
+    } catch (err) {
+      console.error('[OneDriveSync cron]', err.message);
+    } finally {
+      setTimeout(runSync, syncInterval);
+    }
+  }
+  
+  // Start the first sync with a small delay
+  setTimeout(runSync, 5000);
+}
+
 // Настройка Socket.io подключений
 const setupSocketHandlers = require("./src/socketHandlers");
 setupSocketHandlers(io);
@@ -312,12 +349,44 @@ if (!fs.existsSync(uploadDir)) {
 }
 app.use("/uploads", express.static(uploadDir));
 
+// ── Tile server proxy (HTTP) ─────────────────────────────────────────────────
+// In production the built React app is served by this Express process.
+// Vite dev proxy is not available, so we proxy tile server routes here.
+const TILE_SERVER_URL = process.env.TILE_SERVER_URL || 'http://tile-server:8080';
+const tileProxyPaths = ['/tiles/', '/thumbnail/', '/prepare/', '/cache/', '/metrics/', '/search/', '/compare/'];
+
+const http = require('http');
+const urlModule = require('url');
+
+app.use('/thumbnail', (req, res, next) => {
+  console.log(`[Diagnostic] Thumbnail request: ${req.originalUrl}`);
+  next();
+});
+
+app.use(tileProxyPaths.map(p => p.replace(/\/$/, '')), (req, res) => {
+  console.log(`[Proxy] Proxying ${req.method} ${req.originalUrl} to ${TILE_SERVER_URL}`);
+  const parsed = urlModule.parse(TILE_SERVER_URL);
+  const options = {
+    hostname: parsed.hostname,
+    port: parsed.port || 80,
+    path: req.originalUrl, // originalUrl preserves full path including /tiles/ prefix
+    method: req.method,
+    headers: { ...req.headers, host: parsed.host },
+  };
+  const proxyReq = http.request(options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res, { end: true });
+  });
+  proxyReq.on('error', () => res.status(502).json({ error: 'tile-server unavailable' }));
+  req.pipe(proxyReq, { end: true });
+});
+
 // Любой другой роут перенаправляем на index.html (для работы React Router / SPA)
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3030;
 
 // Setup Yjs WebSocket server
 const WebSocket = require('ws');
@@ -330,7 +399,7 @@ httpServer.on('upgrade', (request, socket, head) => {
   if (request.url.startsWith('/yjs/')) {
     const url = new URL(request.url, `http://${request.headers.host}`);
     const token = url.searchParams.get('token');
-    
+
     if (!token) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
@@ -347,9 +416,48 @@ httpServer.on('upgrade', (request, socket, head) => {
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
     }
+  } else if (request.url.startsWith('/ws/')) {
+    // Proxy WebSocket connections to the Go tile server
+    const parsed = urlModule.parse(TILE_SERVER_URL);
+    const tileHost = parsed.hostname;
+    const tilePort = parseInt(parsed.port) || 80;
+
+    const net = require('net');
+    const upstream = net.createConnection(tilePort, tileHost, () => {
+      // Re-send the original HTTP upgrade request to the upstream tile server
+      let upgradeReq = `GET ${request.url} HTTP/1.1\r\n`;
+      for (const [k, v] of Object.entries(request.headers)) {
+        if (k.toLowerCase() !== 'host') upgradeReq += `${k}: ${v}\r\n`;
+      }
+      upgradeReq += `host: ${tileHost}:${tilePort}\r\n\r\n`;
+      upstream.write(upgradeReq);
+      if (head && head.length) upstream.write(head);
+    });
+
+    upstream.on('error', () => { socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); socket.destroy(); });
+    socket.on('error', () => upstream.destroy());
+    upstream.on('close', () => socket.destroy());
+    socket.on('close', () => upstream.destroy());
+
+    socket.pipe(upstream);
+    upstream.pipe(socket);
   }
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+const { exec } = require('child_process');
+
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT} (listening on 0.0.0.0)`);
+  
+  // Автоматически открываем нужный URL в браузере при запуске только если мы не в Docker
+  if (!process.env.TILE_SERVER_URL || process.env.TILE_SERVER_URL.includes('localhost') || process.env.TILE_SERVER_URL.includes('127.0.0.1')) {
+    const startUrl = `http://localhost:${PORT}/login`;
+    if (process.platform === 'win32') {
+      exec(`start ${startUrl}`);
+    } else if (process.platform === 'darwin') {
+      exec(`open ${startUrl}`);
+    } else {
+      exec(`xdg-open ${startUrl}`);
+    }
+  }
 });

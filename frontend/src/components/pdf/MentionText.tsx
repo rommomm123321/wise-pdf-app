@@ -4,7 +4,7 @@ import UserInfoPopover from './UserInfoPopover';
 
 interface ProjectUser {
   id: string;
-  name: string;
+  name: string | null;
   email: string;
 }
 

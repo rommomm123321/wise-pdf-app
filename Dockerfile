@@ -26,7 +26,7 @@ RUN npx prisma generate
 COPY --from=frontend-builder /app/frontend/dist ./public
 
 # Указываем порт, который будет слушать Express
-EXPOSE 3000
+EXPOSE 3030
 
 # Запускаем сервер
 CMD ["node", "server.js"]

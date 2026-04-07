@@ -14,10 +14,10 @@ interface ProjectsResponse {
   pagination: PaginationMeta;
 }
 
-export function useProjects(page = 1, limit = 20, companyId?: string) {
-  const url = `/api/projects?page=${page}&limit=${limit}${companyId && companyId !== 'ALL' && companyId !== '' ? `&companyId=${companyId}` : ''}`;
+export function useProjects(page = 1, limit = 20, companyId?: string, search = '') {
+  const url = `/api/projects?page=${page}&limit=${limit}${companyId && companyId !== 'ALL' && companyId !== '' ? `&companyId=${companyId}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}`;
   return useQuery({
-    queryKey: ['projects', page, limit, companyId],
+    queryKey: ['projects', page, limit, companyId, search],
     queryFn: () => apiFetch<ProjectsResponse>(url),
     select: (res) => ({ projects: res.data, pagination: res.pagination }),
   });

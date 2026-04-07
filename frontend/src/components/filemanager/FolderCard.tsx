@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Card, CardActionArea, CardContent, Typography, Box, IconButton, Menu, MenuItem, Checkbox } from '@mui/material';
+import { Card, CardActionArea, CardContent, Typography, Box, IconButton, Menu, MenuItem, Checkbox, Tooltip } from '@mui/material';
 import FolderIcon from '@mui/icons-material/Folder';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -8,9 +9,11 @@ import ShareIcon from '@mui/icons-material/Share';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@mui/material';
+import toast from 'react-hot-toast';
 
 interface FolderCardProps {
-  folder: { id: string; name: string; projectId: string };
+  folder: { id: string; name: string; projectId: string; syncSource?: string };
+  oneDriveConnected?: boolean;
   canEdit?: boolean;
   canDelete?: boolean;
   canManage?: boolean;
@@ -27,6 +30,7 @@ interface FolderCardProps {
 
 export default function FolderCard({
   folder,
+  oneDriveConnected = true,
   canEdit = false,
   canDelete = false,
   canManage = false,
@@ -76,6 +80,16 @@ export default function FolderCard({
   };
 
   const activeDrop = isDraggingOver || isDropTarget;
+  const isOneDriveDisconnected = folder.syncSource === 'onedrive' && !oneDriveConnected;
+
+  const handleCardClick = () => {
+    if (selectionMode) { onSelect?.(folder.id); return; }
+    if (isOneDriveDisconnected) {
+      toast.error(t('oneDriveFolderDisconnected', 'This folder is synced with OneDrive. Please reconnect OneDrive in company settings to access it.'), { duration: 4000 });
+      return;
+    }
+    navigate(`/projects/${folder.projectId}/folders/${folder.id}`);
+  };
 
   return (
     <Card
@@ -110,13 +124,20 @@ export default function FolderCard({
       )}
 
       <CardActionArea
-        onClick={() => selectionMode ? onSelect?.(folder.id) : navigate(`/projects/${folder.projectId}/folders/${folder.id}`)}
-        sx={{ height: '100%' }}
+        onClick={handleCardClick}
+        sx={{ height: '100%', opacity: isOneDriveDisconnected ? 0.65 : 1 }}
       >
         <CardContent sx={{ pb: '12px !important', pt: 1.5, pr: 4.5, pl: (selectionMode || isSelected) ? 4.5 : 1.5 }}>
-          <FolderIcon color="primary" sx={{ fontSize: 36 }} />
+          <Box sx={{ position: 'relative', display: 'inline-block' }}>
+            <FolderIcon color={isOneDriveDisconnected ? 'disabled' : 'primary'} sx={{ fontSize: 36 }} />
+            {isOneDriveDisconnected && (
+              <Tooltip title={t('oneDriveDisconnected', 'OneDrive disconnected')}>
+                <CloudOffIcon sx={{ fontSize: 16, position: 'absolute', bottom: -2, right: -6, color: 'error.main', bgcolor: 'background.paper', borderRadius: '50%' }} />
+              </Tooltip>
+            )}
+          </Box>
           <Box sx={{ overflow: 'hidden' }}>
-            <Typography variant="body1" fontWeight={600} noWrap>
+            <Typography variant="body1" fontWeight={600} noWrap color={isOneDriveDisconnected ? 'text.disabled' : 'text.primary'}>
               {folder.name}
             </Typography>
           </Box>

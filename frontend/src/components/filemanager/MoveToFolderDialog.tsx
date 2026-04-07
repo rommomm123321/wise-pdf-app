@@ -70,9 +70,10 @@ export default function MoveToFolderDialog({ open, onClose, projectId, onSelect,
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth
+      PaperProps={{ sx: { mx: 2, width: 'calc(100% - 32px)', maxHeight: '80vh' } }}>
       <DialogTitle>{t('moveToFolder', 'Move to folder')}</DialogTitle>
-      <DialogContent sx={{ p: 0 }}>
+      <DialogContent sx={{ p: 0, overflowY: 'auto' }}>
         {tree.length === 0 ? (
           <Box p={3} textAlign="center">
             <Typography variant="body2" color="text.secondary">{t('noFoldersAvailable', 'No folders available')}</Typography>

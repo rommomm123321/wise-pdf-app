@@ -54,10 +54,21 @@ model Company {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
+  // OneDrive Integration
+  oneDriveDriveId      String?
+  oneDriveRootItemId   String?
+  oneDriveOwnerEmail   String?
+  oneDriveAccessToken  String?
+  oneDriveRefreshToken String?
+  oneDriveTokenExpiry  DateTime?
+  oneDriveDeltaLink    String?
+  oneDriveLastSync     DateTime?
+  oneDriveConnected    Boolean   @default(false)
+
   users       User[]
   projects    Project[]
   invitations Invitation[]
-  roles       Role[]       
+  roles       Role[]
   tags        CompanyTag[]
   markupPresets MarkupPropertyPreset[]
 }
@@ -91,6 +102,7 @@ model Role {
   defaultCanDownload Boolean @default(true)
   defaultCanMarkup   Boolean @default(false)
   defaultCanManage   Boolean @default(false)
+  defaultCanUpload   Boolean @default(true)
 
   users       User[]
   invitations Invitation[]
@@ -129,6 +141,10 @@ model User {
 
   preferences Json?    @default("{}")
 
+  // API password for external integrations (Revit plugin, scripts).
+  // Generated on first login. Admin can view/copy it in user settings.
+  apiPassword String?
+
   isDeleted Boolean @default(false)
 
   createdAt DateTime @default(now())
@@ -163,6 +179,7 @@ model ProjectAssignment {
   canDownload Boolean @default(true)
   canMarkup   Boolean @default(false)
   canManage   Boolean @default(false)
+  canUpload   Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -189,6 +206,7 @@ model FolderPermission {
   canDownload Boolean @default(true)
   canMarkup   Boolean @default(false)
   canManage   Boolean @default(false)
+  canUpload   Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -249,6 +267,8 @@ model Project {
   companyId   String
   company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  externalId  String?
+
   isDeleted   Boolean  @default(false)
 
   createdAt   DateTime @default(now())
@@ -270,6 +290,9 @@ model Folder {
   parent    Folder?  @relation("FolderToFolder", fields: [parentId], references: [id])
   children  Folder[] @relation("FolderToFolder")
 
+  externalId  String?
+  syncSource  String?
+
   isDeleted Boolean  @default(false)
 
   files       Document[]
@@ -282,10 +305,13 @@ model Folder {
 model Document {
   id          String   @id @default(uuid())
   name        String
-  storageUrl  String   
+  storageUrl  String
   version     Int      @default(1)
   isLatest    Boolean  @default(true)
   scale       String?  @default("1:1")
+
+  externalId  String?
+  syncSource  String?
 
   folderId    String
   folder      Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)

@@ -38,7 +38,12 @@ module.exports = function setupYjsWebSocket(wss, io) {
               };
               ymap.set(m.id, cleanMarkup);
               // Snapshot initial props for change detection
-              prevPropsMap.set(m.id, { comment: cleanMarkup.properties?.comment, subject: cleanMarkup.properties?.subject });
+              prevPropsMap.set(m.id, {
+                comment: cleanMarkup.properties?.comment,
+                subject: cleanMarkup.properties?.subject,
+                text: cleanMarkup.properties?.text,
+                thread: JSON.stringify(cleanMarkup.properties?.thread || [])
+              });
             }
           }
         }, 'server-init');
@@ -69,13 +74,15 @@ module.exports = function setupYjsWebSocket(wss, io) {
                 const commentChanged = (m.properties?.comment || '') !== (prev.comment || '');
                 const subjectChanged = (m.properties?.subject || '') !== (prev.subject || '');
                 const canvasTextChanged = (m.properties?.text || '') !== (prev.text || '');
-                const mentionsChanged = commentChanged || subjectChanged || canvasTextChanged;
+                const threadChanged = JSON.stringify(m.properties?.thread || []) !== (prev.thread || '[]');
+                const mentionsChanged = commentChanged || subjectChanged || canvasTextChanged || threadChanged;
 
                 // Update snapshot
                 prevPropsMap.set(key, {
                   comment: m.properties?.comment,
                   subject: m.properties?.subject,
                   text: m.properties?.text,
+                  thread: JSON.stringify(m.properties?.thread || [])
                 });
 
                 // Debounce DB write to avoid hammering DB during drag
@@ -127,7 +134,7 @@ module.exports = function setupYjsWebSocket(wss, io) {
                     }
 
                     // Process @mentions — only when relevant fields actually changed (prevents spam)
-                    if (mentionsChanged && actorId && (m.properties?.subject || m.properties?.comment || m.properties?.text)) {
+                    if (mentionsChanged && actorId && (m.properties?.subject || m.properties?.comment || m.properties?.text || (m.properties?.thread && m.properties.thread.length > 0))) {
                       if (!m.properties?.isPastedOrDuplicated) {
                         const docInfo = await prisma.document.findUnique({
                           where: { id: m.documentId || documentId },

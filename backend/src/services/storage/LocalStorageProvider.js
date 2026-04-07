@@ -12,14 +12,14 @@ class LocalStorageProvider extends IStorageProvider {
     super();
     // Определяем папку загрузок (например, backend/uploads)
     this.uploadDir = path.resolve(process.cwd(), 'uploads');
-    
+
     // Создаем папку, если ее нет
     if (!fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true });
     }
   }
 
-  async uploadFile(fileBuffer, fileName, mimeType) {
+  async uploadFile(fileBuffer, fileName, mimeType, parentFolderId = null) {
     try {
       // Генерируем уникальное имя файла, чтобы избежать конфликтов
       const ext = path.extname(fileName) || '.pdf';
@@ -28,13 +28,19 @@ class LocalStorageProvider extends IStorageProvider {
 
       // Сохраняем файл на диск
       fs.writeFileSync(filePath, fileBuffer);
-      
+
       console.log(`[Storage] Файл сохранен локально: ${uniqueFileName}`);
       return uniqueFileName; // Возвращаем имя файла как ID
     } catch (error) {
       console.error('[Storage] Ошибка сохранения локального файла:', error);
       throw error;
     }
+  }
+
+  async downloadFile(storageUrl) {
+    const fileName = storageUrl.replace(/^\/uploads\//, '');
+    const filePath = path.resolve(process.cwd(), 'uploads', fileName);
+    return fs.createReadStream(filePath);
   }
 
   async deleteFile(fileId) {
@@ -52,7 +58,7 @@ class LocalStorageProvider extends IStorageProvider {
   }
 
   async getFileUrl(fileId) {
-    // В локальном хранилище мы возвращаем относительный URL, 
+    // В локальном хранилище мы возвращаем относительный URL,
     // который будет обрабатываться нашим Express-сервером.
     return `/uploads/${fileId}`;
   }

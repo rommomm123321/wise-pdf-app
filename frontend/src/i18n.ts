@@ -808,10 +808,10 @@ const resources = {
 };
 
 i18n
-  .use(LanguageDetector)
   .use(initReactI18next)
   .init({
     resources,
+    lng: "en",          // force English — no browser detection
     fallbackLng: "en",
     debug: false,
     interpolation: {

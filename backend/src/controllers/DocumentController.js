@@ -4,8 +4,74 @@ const { logAction } = require('../services/auditService');
 const { getDocumentPermissions } = require('../middlewares/permissionMiddleware');
 const path = require('path');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
 
 class DocumentController {
+  /**
+   * Prewarm the tile-server cache asynchronously after upload.
+   * Steps:
+   *   1. POST /prepare/:docId  — loads PDF into pool, builds DocInfo (page sizes)
+   *   2. GET  /thumbnail/:docId/:page  — pre-renders zoom-0 thumbnails for ALL pages
+   *   3. GET  /tiles/:docId/:page/1/tx/ty — pre-renders zoom-1 tiles for first 4 pages
+   *
+   * Results go to L2 disk cache (/data/tile-cache) which is a persistent Docker volume.
+   * Any subsequent user opening this document gets all tiles instantly from disk.
+   */
+  static async _prewarmTileServer(documentId, userId) {
+    try {
+      const jwtTokenStr = jwt.sign(
+        { userId: userId || 'system', role: 'GENERAL_ADMIN' },
+        process.env.JWT_SECRET || 'super_secret_jwt_key_for_redlines',
+        { expiresIn: '2h' }
+      );
+      const BASE = process.env.TILE_SERVER_URL || 'http://tile-server:8080';
+      const tok = encodeURIComponent(jwtTokenStr);
+
+      console.log(`[Prewarm] Starting for doc ${documentId}…`);
+
+      // Step 1: prepare — get DocInfo with page count
+      const prepRes = await fetch(`${BASE}/prepare/${documentId}?token=${tok}`, { method: 'POST' });
+      if (!prepRes.ok) { console.warn('[Prewarm] prepare failed:', prepRes.status); return; }
+      const docInfo = await prepRes.json();
+      const pageCount = docInfo.pageCount || 0;
+      console.log(`[Prewarm] ${documentId}: ${pageCount} pages — prefetching thumbnails…`);
+
+      // Step 2: thumbnails for all pages (zoom=0) — lightweight, ~5-20KB each
+      const CONCURRENCY = 4;
+      const thumbQueue = Array.from({ length: pageCount }, (_, i) => i);
+      const fetchThumb = async (page) => {
+        try {
+          await fetch(`${BASE}/thumbnail/${documentId}/${page}?token=${tok}`);
+        } catch { /* ignore individual failures */ }
+      };
+      // Process in batches of CONCURRENCY
+      for (let i = 0; i < thumbQueue.length; i += CONCURRENCY) {
+        await Promise.all(thumbQueue.slice(i, i + CONCURRENCY).map(fetchThumb));
+      }
+
+      // Step 3: zoom-1 tiles for first 6 pages (the ones users see first)
+      const EAGER_PAGES = Math.min(6, pageCount);
+      for (let pg = 0; pg < EAGER_PAGES; pg++) {
+        const page = docInfo.pages?.[pg];
+        if (!page) continue;
+        const tileScale = 0.5; // zoom level 1
+        const tileSize = 512;
+        const cols = Math.ceil(page.w / (tileSize / tileScale));
+        const rows = Math.ceil(page.h / (tileSize / tileScale));
+        const tileFetches = [];
+        for (let tx = 0; tx < cols; tx++) {
+          for (let ty = 0; ty < rows; ty++) {
+            tileFetches.push(fetch(`${BASE}/tiles/${documentId}/${pg}/1/${tx}/${ty}?token=${tok}`).catch(() => {}));
+          }
+        }
+        await Promise.all(tileFetches);
+      }
+
+      console.log(`[Prewarm] ${documentId}: done — ${pageCount} thumbnails + ${EAGER_PAGES} pages zoom-1 cached.`);
+    } catch (e) {
+      console.warn('[Prewarm] error (non-fatal):', e.message);
+    }
+  }
   // Upload a new PDF (auto-versioning)
   static async uploadDocument(req, res) {
     try {
@@ -14,6 +80,14 @@ class DocumentController {
 
       if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
+      // Find folder and project to get companyId and externalId
+      const folder = await prisma.folder.findUnique({
+        where: { id: folderId },
+        include: { project: { include: { company: true } } }
+      });
+      if (!folder) return res.status(404).json({ error: 'Folder not found' });
+      const companyId = folder.project.companyId;
+
       // Find existing doc with same name in this folder to increment version
       const existingDoc = await prisma.document.findFirst({
         where: { folderId, name: file.originalname, isLatest: true },
@@ -21,10 +95,30 @@ class DocumentController {
 
       const version = existingDoc ? existingDoc.version + 1 : 1;
 
-      // Get provider from factory (reads process.env.STORAGE_TYPE)
-      const storage = StorageFactory.getProvider();
-      const fileId = await storage.uploadFile(file.buffer, file.originalname, file.mimetype);
-      const storageUrl = await storage.getFileUrl(fileId);
+      // Select storage provider for this company
+      const storage = await StorageFactory.getProviderForCompany(companyId);
+      
+      let storageUrl;
+      let externalId = null;
+
+      // Determine target folder in OneDrive
+      let targetExternalId = folder.externalId;
+      if (!targetExternalId && folder.name === 'Root' && !folder.parentId) {
+        targetExternalId = folder.project.externalId;
+      }
+
+      // Check if it's OneDrive to use versioned naming and folder ID
+      const OneDriveProvider = require('../services/storage/OneDriveProvider');
+      if (storage instanceof OneDriveProvider && targetExternalId) {
+        const ext = path.extname(file.originalname);
+        const baseName = path.basename(file.originalname, ext);
+        const versionedName = `${baseName}_v${version}${ext}`;
+        externalId = await storage.uploadFile(file.buffer, versionedName, file.mimetype, targetExternalId);
+        storageUrl = externalId;
+      } else {
+        const fileId = await storage.uploadFile(file.buffer, file.originalname, file.mimetype);
+        storageUrl = await storage.getFileUrl(fileId);
+      }
 
       // If updating, mark old as not latest
       if (existingDoc) {
@@ -41,6 +135,8 @@ class DocumentController {
           version,
           isLatest: true,
           folderId,
+          externalId,
+          syncSource: 'wise',
         },
       });
 
@@ -51,8 +147,12 @@ class DocumentController {
         details: { name: document.name, version: document.version },
       });
 
+      // Fire and forget: Prewarm tile server for 0-second loader on open
+      DocumentController._prewarmTileServer(document.id, req.user.userId);
+
       res.status(201).json({ status: 'ok', data: { ...document, markups: [] } });
     } catch (error) {
+      console.error('[uploadDocument] Error:', error);
       res.status(500).json({ error: error.message });
     }
   }
@@ -65,33 +165,67 @@ class DocumentController {
 
       if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-      const oldDoc = await prisma.document.findUnique({ where: { id: documentId } });
+      const oldDoc = await prisma.document.findUnique({ 
+        where: { id: documentId },
+        include: { folder: { include: { project: { include: { company: true } } } } }
+      });
       if (!oldDoc) return res.status(404).json({ error: 'Document not found' });
 
-      // Set old version to not latest
+      // Mark old as not latest
       await prisma.document.update({
         where: { id: documentId },
         data: { isLatest: false }
       });
 
-      const storage = StorageFactory.getProvider();
-      const fileId = await storage.uploadFile(file.buffer, file.originalname, file.mimetype);
-      const storageUrl = await storage.getFileUrl(fileId);
+      const companyId = oldDoc.folder.project.companyId;
+      const folder = oldDoc.folder;
+      const newVersion = oldDoc.version + 1;
+
+      // Select storage provider for this company
+      const storage = await StorageFactory.getProviderForCompany(companyId);
+      
+      let storageUrl;
+      let externalId = null;
+
+      // Determine target folder in OneDrive
+      let targetExternalId = folder.externalId;
+      if (!targetExternalId && folder.name === 'Root' && !folder.parentId) {
+        targetExternalId = folder.project.externalId;
+      }
+
+      // Check if it's OneDrive to use versioned naming and folder ID
+      const OneDriveProvider = require('../services/storage/OneDriveProvider');
+      if (storage instanceof OneDriveProvider && targetExternalId) {
+        const ext = path.extname(file.originalname);
+        const baseName = path.basename(file.originalname, ext);
+        const versionedName = `${baseName}_v${newVersion}${ext}`;
+        externalId = await storage.uploadFile(file.buffer, versionedName, file.mimetype, targetExternalId);
+        storageUrl = externalId;
+      } else {
+        const fileId = await storage.uploadFile(file.buffer, file.originalname, file.mimetype);
+        storageUrl = await storage.getFileUrl(fileId);
+      }
 
       const newDoc = await prisma.document.create({
         data: {
           name: oldDoc.name,
           storageUrl,
-          version: oldDoc.version + 1,
+          version: newVersion,
           isLatest: true,
-          folderId: oldDoc.folderId
+          folderId: oldDoc.folderId,
+          externalId,
+          syncSource: 'wise',
         }
       });
 
       await logAction({ action: 'UPDATE', userId: req.user.userId, documentId: newDoc.id, details: { action: 'replaced_version' } });
 
+      // Fire and forget: Prewarm tile server for the new version
+      DocumentController._prewarmTileServer(newDoc.id, req.user.userId);
+
       res.json({ status: 'ok', data: { ...newDoc, markups: [] } });
     } catch (error) {
+      console.error('[replaceDocument] Error:', error);
       res.status(500).json({ error: error.message });
     }
   }
@@ -165,16 +299,24 @@ class DocumentController {
       const { documentIds } = req.body;
       if (!Array.isArray(documentIds)) return res.status(400).json({ error: 'Invalid data' });
 
-      await prisma.document.updateMany({
-        where: { id: { in: documentIds } },
-        data: { isDeleted: true }
-      });
-
+      await prisma.document.updateMany({ where: { id: { in: documentIds } }, data: { isDeleted: true } });
       for (const id of documentIds) {
         await logAction({ action: 'DELETE', userId: req.user.userId, documentId: id, details: { action: 'bulk_soft_delete' } });
       }
 
       res.json({ status: 'ok' });
+
+      setImmediate(async () => {
+        try {
+          const docsToDelete = await prisma.document.findMany({ where: { id: { in: documentIds } }, include: { folder: { include: { project: { include: { company: true } } } } } });
+          for (const d of docsToDelete) {
+            if (d.externalId && d.folder?.project?.company?.oneDriveConnected) {
+              const storage = await StorageFactory.getProviderForCompany(d.folder.project.companyId);
+              await storage.deleteFile(d.externalId).catch(e => console.warn('Failed to delete in OD:', e.message));
+            }
+          }
+        } catch (syncErr) { console.error('[OneDrive] bulkDelete docs sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -185,16 +327,25 @@ class DocumentController {
       const { documentIds, targetFolderId } = req.body;
       if (!Array.isArray(documentIds) || !targetFolderId) return res.status(400).json({ error: 'Invalid data' });
 
-      await prisma.document.updateMany({
-        where: { id: { in: documentIds } },
-        data: { folderId: targetFolderId }
-      });
-
+      await prisma.document.updateMany({ where: { id: { in: documentIds } }, data: { folderId: targetFolderId } });
       for (const id of documentIds) {
         await logAction({ action: 'MOVE', userId: req.user.userId, documentId: id, details: { action: 'bulk_move', targetFolderId } });
       }
 
       res.json({ status: 'ok' });
+
+      setImmediate(async () => {
+        try {
+          const targetFolder = await prisma.folder.findUnique({ where: { id: targetFolderId }, include: { project: { include: { company: true } } } });
+          if (targetFolder?.externalId && targetFolder?.project?.company?.oneDriveConnected) {
+            const storage = await StorageFactory.getProviderForCompany(targetFolder.project.companyId);
+            const docsToMove = await prisma.document.findMany({ where: { id: { in: documentIds } } });
+            for (const d of docsToMove) {
+              if (d.externalId) await storage.moveItem(d.externalId, targetFolder.externalId).catch(e => console.warn('Failed to move in OD:', e.message));
+            }
+          }
+        } catch (syncErr) { console.error('[OneDrive] bulkMove docs sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -218,12 +369,21 @@ class DocumentController {
   static async deleteDocument(req, res) {
     try {
       const { documentId } = req.params;
-      const doc = await prisma.document.update({ 
-        where: { id: documentId },
-        data: { isDeleted: true }
-      });
+      const d = await prisma.document.findUnique({ where: { id: documentId }, include: { folder: { include: { project: { include: { company: true } } } } } });
+
+      const doc = await prisma.document.update({ where: { id: documentId }, data: { isDeleted: true } });
       await logAction({ action: 'DELETE', userId: req.user.userId, documentId, details: { name: doc.name } });
+
       res.json({ status: 'ok' });
+
+      setImmediate(async () => {
+        try {
+          if (d?.externalId && d?.folder?.project?.company?.oneDriveConnected) {
+            const storage = await StorageFactory.getProviderForCompany(d.folder.project.companyId);
+            await storage.deleteFile(d.externalId).catch(e => console.warn('Failed to delete single doc in OD:', e.message));
+          }
+        } catch (syncErr) { console.error('[OneDrive] deleteDocument sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -352,16 +512,28 @@ class DocumentController {
   static async proxyDocument(req, res) {
     try {
       const { documentId } = req.params;
-      const doc = await prisma.document.findUnique({ where: { id: documentId } });
+      const doc = await prisma.document.findUnique({
+        where: { id: documentId },
+        include: { folder: { include: { project: { include: { company: true } } } } }
+      });
       if (!doc) return res.status(404).json({ error: 'Document not found' });
 
-      const storage = StorageFactory.getProvider();
-      
+      // If OneDrive connected for this company, stream from OneDrive
+      if (doc.externalId && doc.folder?.project?.company?.oneDriveConnected) {
+        const companyId = doc.folder.project.companyId;
+        const storage = await StorageFactory.getProviderForCompany(companyId);
+        const stream = await storage.downloadFile(doc.externalId);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name)}"`);
+        stream.pipe(res);
+        return;
+      }
+
       // Serve local file directly with auth (avoiding redirects which break in proxy scenarios)
       if (process.env.STORAGE_TYPE === 'local' || !process.env.STORAGE_TYPE) {
         const fileName = doc.storageUrl.replace(/^\/uploads\//, '');
         const filePath = path.resolve(process.cwd(), 'uploads', fileName);
-        
+
         if (!fs.existsSync(filePath)) {
           return res.status(404).json({ error: 'File not found on disk' });
         }
@@ -371,14 +543,15 @@ class DocumentController {
         return res.sendFile(filePath);
       }
 
-      // Для облачных провайдеров стримим контент
+      // For cloud providers stream content
+      const storage = StorageFactory.getProvider();
       if (storage.downloadFile) {
         const stream = await storage.downloadFile(doc.storageUrl);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name)}"`);
         stream.pipe(res);
       } else {
-        // Fallback если стриминг не реализован
+        // Fallback if streaming not implemented
         const url = await storage.getFileUrl(doc.storageUrl);
         res.redirect(url);
       }

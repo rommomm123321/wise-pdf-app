@@ -21,11 +21,14 @@ interface FolderContentsResponse {
   pagination: FolderPagination;
 }
 
-export function useFolderContents(folderId: string | undefined, page = 1, limit = 50) {
+export function useFolderContents(folderId: string | undefined, page = 1, limit = 50, search = '') {
   return useQuery({
-    queryKey: ['folder-contents', folderId, page, limit],
-    queryFn: () =>
-      apiFetch<FolderContentsResponse>(`/api/folders/${folderId}/contents?page=${page}&limit=${limit}`),
+    queryKey: ['folder-contents', folderId, page, limit, search],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (search) params.set('search', search);
+      return apiFetch<FolderContentsResponse>(`/api/folders/${folderId}/contents?${params}`);
+    },
     select: (res) => ({ ...res.data, pagination: res.pagination }),
     enabled: !!folderId,
   });

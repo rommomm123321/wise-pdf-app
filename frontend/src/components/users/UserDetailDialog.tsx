@@ -25,6 +25,10 @@ import FolderSpecialIcon from '@mui/icons-material/FolderSpecial';
 import DescriptionIcon from '@mui/icons-material/Description';
 import DeleteIcon from '@mui/icons-material/Delete';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import KeyIcon from '@mui/icons-material/Key';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
@@ -91,6 +95,11 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
   const assignProject = useAssignProject();
   const unassignProject = useUnassignProject();
   const updatePermissions = useUpdateProjectPermissions();
+
+  // API Password for Revit/external integrations
+  const [apiPassword, setApiPassword] = useState<string | null>(null);
+  const [apiPasswordVisible, setApiPasswordVisible] = useState(false);
+  const [apiPasswordLoading, setApiPasswordLoading] = useState(false);
   const { data: companyTags = [] } = useCompanyTags();
   const createTag = useCreateCompanyTag();
   const updateUserTags = useUpdateUserTags();
@@ -120,6 +129,7 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
 
   const [addProjectId, setAddProjectId] = useState('');
   const [newTagText, setNewTagText] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#1565c0');
   const [selectiveProject, setSelectiveProject] = useState<any>(null);
 
   const isMobile = useMediaQuery('(max-width:600px)');
@@ -316,30 +326,128 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
                   </MenuItem>
                 ))}
               </Select>
-              <TextField
-                size="small"
-                placeholder={t('newTag', 'New tag...')}
-                value={newTagText}
-                onChange={(e: any) => setNewTagText(e.target.value)}
-                sx={{ minWidth: 120 }}
-                onKeyDown={(e: any) => {
-                  if (e.key === 'Enter' && newTagText.trim()) {
-                    createTag.mutate({ text: newTagText.trim() }, {
-                      onSuccess: (res: any) => {
-                        const tagId = res?.data?.id;
-                        if (tagId) {
-                          const currentTagIds = (user.tags || []).map((tg: any) => tg.id);
-                          updateUserTags.mutate({ userId: user.id, tagIds: [...currentTagIds, tagId] });
+              <Box display="flex" alignItems="center" gap={0.5}>
+                <input
+                  type="color"
+                  value={newTagColor}
+                  onChange={(e) => setNewTagColor(e.target.value)}
+                  style={{ width: 28, height: 28, border: 'none', padding: 0, cursor: 'pointer', background: 'none', borderRadius: 4 }}
+                  title="Tag color"
+                />
+                <TextField
+                  size="small"
+                  placeholder={t('newTag', 'New tag...')}
+                  value={newTagText}
+                  onChange={(e: any) => setNewTagText(e.target.value)}
+                  sx={{ minWidth: 120 }}
+                  onKeyDown={(e: any) => {
+                    if (e.key === 'Enter' && newTagText.trim()) {
+                      createTag.mutate({ text: newTagText.trim(), color: newTagColor }, {
+                        onSuccess: (res: any) => {
+                          const tagId = res?.data?.id;
+                          if (tagId) {
+                            const currentTagIds = (user.tags || []).map((tg: any) => tg.id);
+                            updateUserTags.mutate({ userId: user.id, tagIds: [...currentTagIds, tagId] });
+                          }
+                          setNewTagText('');
                         }
-                        setNewTagText('');
-                      }
-                    });
-                  }
-                }}
-              />
+                      });
+                    }
+                  }}
+                />
+              </Box>
             </Box>
           )}
         </Box>
+
+        {/* ── API Password (Revit / External Integrations) — Admin only ── */}
+        {canManageUser && (
+          <>
+            <Divider sx={{ mb: 2 }} />
+            <Box mb={2}>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <KeyIcon sx={{ fontSize: 18, color: theme.palette.primary.main }} />
+                <Typography variant="h6" sx={{ fontSize: '0.95rem' }}>API Access (Revit / Scripts)</Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', mb: 1.5 }}>
+                Credentials for external integrations. User logs in with email + API password to get a 30-day token.
+              </Typography>
+
+              {/* Email (always visible) */}
+              <Box mb={1}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>Login</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.3 }}>
+                  <TextField size="small" fullWidth value={user?.email || ''} InputProps={{ readOnly: true, sx: { fontSize: '0.85rem', fontFamily: 'monospace' } }} />
+                  <Tooltip title="Copy email">
+                    <IconButton size="small" onClick={() => { navigator.clipboard.writeText(user?.email || ''); toast.success('Email copied'); }}>
+                      <ContentCopyIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
+
+              {/* Password (hidden by default) */}
+              <Box mb={1}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>API Password</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.3 }}>
+                  <TextField
+                    size="small" fullWidth
+                    type={apiPasswordVisible ? 'text' : 'password'}
+                    value={apiPassword || (apiPasswordLoading ? 'Loading...' : '••••••••••••••••')}
+                    InputProps={{
+                      readOnly: true,
+                      sx: { fontSize: '0.85rem', fontFamily: 'monospace' },
+                    }}
+                  />
+                  <Tooltip title={apiPasswordVisible ? 'Hide' : 'Show password'}>
+                    <IconButton size="small" onClick={async () => {
+                      if (!apiPassword && !apiPasswordLoading) {
+                        setApiPasswordLoading(true);
+                        try {
+                          const res = await apiFetch<any>(`/api/users/${userId}/api-password`);
+                          setApiPassword(res?.data?.apiPassword || 'No password');
+                        } catch { setApiPassword('Error loading'); }
+                        setApiPasswordLoading(false);
+                      }
+                      setApiPasswordVisible(v => !v);
+                    }}>
+                      {apiPasswordVisible ? <VisibilityOffIcon sx={{ fontSize: 16 }} /> : <VisibilityIcon sx={{ fontSize: 16 }} />}
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Copy password">
+                    <IconButton size="small" onClick={async () => {
+                      if (!apiPassword) {
+                        const res = await apiFetch<any>(`/api/users/${userId}/api-password`);
+                        const pw = res?.data?.apiPassword;
+                        if (pw) { setApiPassword(pw); navigator.clipboard.writeText(pw); toast.success('Password copied'); }
+                      } else {
+                        navigator.clipboard.writeText(apiPassword);
+                        toast.success('Password copied');
+                      }
+                    }}>
+                      <ContentCopyIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Regenerate password">
+                    <IconButton size="small" onClick={async () => {
+                      if (!confirm('Regenerate API password? Old password will stop working.')) return;
+                      setApiPasswordLoading(true);
+                      try {
+                        const res = await apiFetch<any>(`/api/users/${userId}/api-password/regenerate`, { method: 'POST' });
+                        setApiPassword(res?.data?.apiPassword || '');
+                        setApiPasswordVisible(true);
+                        toast.success('New password generated');
+                      } catch { toast.error('Failed to regenerate'); }
+                      setApiPasswordLoading(false);
+                    }}>
+                      <RefreshIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
+            </Box>
+          </>
+        )}
 
         <Divider sx={{ mb: 3 }} />
 

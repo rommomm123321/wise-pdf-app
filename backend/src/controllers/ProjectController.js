@@ -35,23 +35,30 @@ class ProjectController {
         return res.json({ status: 'ok', data: [], pagination: { page, limit, total: 0, totalPages: 0 } });
       }
 
+      const { search } = req.query;
+
       if (useAssignments) {
+        let assignmentWhere = { 
+          userId,
+          project: { isDeleted: false, company: { isArchived: false } }
+        };
+        if (search) {
+          assignmentWhere.project.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } }
+          ];
+        }
+
         const [assignments, total] = await Promise.all([
           prisma.projectAssignment.findMany({
-            where: { 
-              userId,
-              project: { isDeleted: false, company: { isArchived: false } }
-            },
+            where: assignmentWhere,
             include: { project: { include: { company: { select: { id: true, name: true } } } } },
             skip,
             take: limit,
             orderBy: { project: { createdAt: 'desc' } },
           }),
           prisma.projectAssignment.count({ 
-            where: { 
-              userId,
-              project: { isDeleted: false, company: { isArchived: false } }
-            } 
+            where: assignmentWhere 
           }),
         ]);
         const projects = assignments.map(a => ({
@@ -67,6 +74,13 @@ class ProjectController {
           }
         }));
         return res.json({ status: 'ok', data: projects, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+      }
+
+      if (search) {
+        where.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } }
+        ];
       }
 
       const [projects, total] = await Promise.all([
@@ -111,6 +125,19 @@ class ProjectController {
       });
 
       res.status(201).json({ status: 'ok', data: project });
+
+      // OneDrive sync in background
+      setImmediate(async () => {
+        try {
+          const company = await prisma.company.findUnique({ where: { id: companyId } });
+          if (company?.oneDriveConnected && company?.oneDriveRootItemId) {
+            const StorageFactory = require('../services/storage/StorageFactory');
+            const storage = await StorageFactory.getProviderForCompany(companyId);
+            const externalId = await storage.createFolder(project.name, company.oneDriveRootItemId);
+            if (externalId) await prisma.project.update({ where: { id: project.id }, data: { externalId } });
+          }
+        } catch (syncErr) { console.error('[OneDrive] createProject sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -127,7 +154,7 @@ class ProjectController {
             where: { parentId: null, isDeleted: false },
             select: { id: true, name: true },
           },
-          company: { select: { name: true } },
+          company: { select: { name: true, isArchived: true, oneDriveConnected: true } },
         },
       });
 
@@ -160,21 +187,36 @@ class ProjectController {
     }
   }
 
+  // Удалить проекты (массово)
   static async bulkDelete(req, res) {
     try {
       const { projectIds } = req.body;
-      if (!Array.isArray(projectIds)) return res.status(400).json({ error: 'Invalid ids' });
-      await prisma.project.updateMany({ 
+      if (!Array.isArray(projectIds)) return res.status(400).json({ error: 'Invalid data' });
+
+      await prisma.project.updateMany({
         where: { id: { in: projectIds } },
         data: { isDeleted: true }
       });
-      
+
       const { logAction } = require('../services/auditService');
       for (const id of projectIds) {
         await logAction({ action: 'DELETE', userId: req.user.userId, projectId: id, details: { action: 'bulk_soft_delete' } });
       }
-      
+
       res.json({ status: 'ok' });
+
+      setImmediate(async () => {
+        try {
+          const projectsToDelete = await prisma.project.findMany({ where: { id: { in: projectIds } }, include: { company: true } });
+          for (const p of projectsToDelete) {
+            if (p.externalId && p.company?.oneDriveConnected) {
+              const StorageFactory = require('../services/storage/StorageFactory');
+              const storage = await StorageFactory.getProviderForCompany(p.companyId);
+              await storage.deleteFolder(p.externalId).catch(e => console.warn('Failed to delete project in OD:', e.message));
+            }
+          }
+        } catch (syncErr) { console.error('[OneDrive] bulkDelete projects sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -184,15 +226,29 @@ class ProjectController {
     try {
       const { projectId } = req.params;
       const { name, description } = req.body;
+      const existing = await prisma.project.findUnique({ where: { id: projectId }, include: { company: true } });
+      
       const updated = await prisma.project.update({
         where: { id: projectId },
         data: { name, description }
       });
       
       const { logAction } = require('../services/auditService');
-      await logAction({ action: 'RENAME', userId: req.user.userId, projectId, details: { name, description } });
+      await logAction({ action: 'UPDATE', userId: req.user.userId, projectId, details: { action: 'rename', name, description } });
       
       res.json({ status: 'ok', data: updated });
+
+      setImmediate(async () => {
+        try {
+          if (existing?.externalId && existing?.company?.oneDriveConnected) {
+            const StorageFactory = require('../services/storage/StorageFactory');
+            const storage = await StorageFactory.getProviderForCompany(existing.companyId);
+            if (name && name !== existing.name) {
+              await storage.renameItem(existing.externalId, name);
+            }
+          }
+        } catch (syncErr) { console.error('[OneDrive] updateProject sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -201,15 +257,27 @@ class ProjectController {
   static async deleteProject(req, res) {
     try {
       const { projectId } = req.params;
-      await prisma.project.update({ 
+      const existing = await prisma.project.findUnique({ where: { id: projectId }, include: { company: true } });
+
+      await prisma.project.update({
         where: { id: projectId },
         data: { isDeleted: true }
       });
-      
+
       const { logAction } = require('../services/auditService');
       await logAction({ action: 'DELETE', userId: req.user.userId, projectId });
-      
+
       res.json({ status: 'ok' });
+
+      setImmediate(async () => {
+        try {
+          if (existing?.externalId && existing?.company?.oneDriveConnected) {
+            const StorageFactory = require('../services/storage/StorageFactory');
+            const storage = await StorageFactory.getProviderForCompany(existing.companyId);
+            await storage.deleteFolder(existing.externalId);
+          }
+        } catch (syncErr) { console.error('[OneDrive] deleteProject sync failed:', syncErr.message); }
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

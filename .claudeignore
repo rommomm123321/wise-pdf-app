@@ -1,0 +1,67 @@
+# Dependency directories (САМОЕ ВАЖНОЕ: тонны лишних токенов тут)
+node_modules/
+bower_components/
+packages/
+
+# Build and output (Скомпилированный код читать не нужно)
+dist/
+build/
+out/
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Logs and databases (Особенно важно для PostgreSQL)
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.sqlite
+*.db
+postgres_data/
+
+# IDE and System files
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docindex
+.DS_Store
+Thumbs.db
+
+# Environment and Secrets (Безопасность + экономия)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Git
+.git/
+.gitignore
+
+# Assets (Картинки и шрифты Claude не "читает", но в токены они превращаются)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.pdf
+*.zip
+*.tar.gz
+
+# Revit specific (Если работаешь в той же папке над плагинами)
+*.rvt
+*.rfa
+*.rte
+Backup/

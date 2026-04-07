@@ -106,7 +106,7 @@ export default function ReplaceDocumentDialog({
               control={<Radio size="small" />}
               label={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <LayersClearIcon fontSize="small" color="text.secondary" />
+                  <LayersClearIcon fontSize="small" color="action" />
                   <Box>
                     <Typography variant="body2" fontWeight={600}>
                       {t('discardMarkups', 'Start clean — no markups')}

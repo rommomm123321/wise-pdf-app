@@ -11,7 +11,7 @@ async function getProjectPermissions(userId, projectId) {
   if (!user) return null;
 
   if (user.systemRole === 'GENERAL_ADMIN') {
-    return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, scope: 'FULL' };
+    return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, canUpload: true, scope: 'FULL' };
   }
 
   if (user.roleId) {
@@ -26,7 +26,7 @@ async function getProjectPermissions(userId, projectId) {
 
     // Если это админ компании — полный доступ
     if (project && user.role?.name === 'Admin' && user.companyId === project.companyId) {
-      return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, scope: 'FULL' };
+      return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, canUpload: true, scope: 'FULL' };
     }
   }
 
@@ -54,7 +54,7 @@ async function getFolderPermissions(userId, folderId) {
   if (!folder) return null;
 
   if (user.systemRole === 'GENERAL_ADMIN') {
-    return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, scope: 'FULL' };
+    return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, canUpload: true, scope: 'FULL' };
   }
 
   // 1.5 Check if company is archived
@@ -79,7 +79,7 @@ async function getFolderPermissions(userId, folderId) {
 
   // 4. GHOST PATH LOGIC: recursive check — does user have access to ANY descendant?
   if (await hasDescendantAccess(userId, folderId)) {
-    return { canView: true, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, isGhost: true };
+    return { canView: true, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, canUpload: false, isGhost: true };
   }
 
   return null;
@@ -90,21 +90,38 @@ async function getFolderPermissions(userId, folderId) {
  * Используется для Ghost Path — чтобы показать промежуточные папки как "контейнеры".
  */
 async function hasDescendantAccess(userId, folderId) {
-  // Получаем дочерние папки
-  const childFolders = await prisma.folder.findMany({
-    where: { parentId: folderId },
-    select: { id: true }
+  // 1. Get the folder to know its project
+  const targetFolder = await prisma.folder.findUnique({
+    where: { id: folderId },
+    select: { projectId: true }
+  });
+  if (!targetFolder) return false;
+
+  // 2. Get all permissions for this user in this project
+  const userPermissions = await prisma.folderPermission.findMany({
+    where: { userId, folder: { projectId: targetFolder.projectId } },
+    select: { folderId: true }
   });
 
-  for (const child of childFolders) {
-    // 1. Прямой FolderPermission на дочернюю папку
-    const folderPerm = await prisma.folderPermission.findFirst({
-      where: { userId, folderId: child.id }
-    });
-    if (folderPerm) return true;
+  if (userPermissions.length === 0) return false;
 
-    // 2. Рекурсия — проверяем потомков этой дочерней папки
-    if (await hasDescendantAccess(userId, child.id)) return true;
+  const targetFolderIds = new Set(userPermissions.map(p => p.folderId));
+
+  // 3. Get all folders in the project to build a map
+  const allFolders = await prisma.folder.findMany({
+    where: { projectId: targetFolder.projectId, isDeleted: false },
+    select: { id: true, parentId: true }
+  });
+  
+  const folderMap = new Map(allFolders.map(f => [f.id, f]));
+
+  // 4. For each folder the user has access to, check if folderId is an ancestor
+  for (const startId of targetFolderIds) {
+    let curr = folderMap.get(startId);
+    while (curr && curr.parentId) {
+      if (curr.parentId === folderId) return true;
+      curr = folderMap.get(curr.parentId);
+    }
   }
 
   return false;
@@ -120,12 +137,12 @@ async function getDocumentPermissions(userId, documentId) {
     include: { role: true }
   });
   
-  const defaultNoAccess = { canView: false, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, canManage: false };
+  const defaultNoAccess = { canView: false, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, canManage: false, canUpload: false };
 
   if (!user) return defaultNoAccess;
 
   if (user.systemRole === 'GENERAL_ADMIN') {
-    return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, scope: 'FULL' };
+    return { canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true, canUpload: true, scope: 'FULL' };
   }
 
   const doc = await prisma.document.findUnique({ 

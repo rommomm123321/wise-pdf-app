@@ -271,6 +271,14 @@ export default function AuditLogPage() {
       >
         <Typography variant="h5" fontWeight={700}>
           {t("auditLogTitle", "Audit Logs")}
+          <Typography
+            component="span"
+            color="text.secondary"
+            fontWeight={500}
+            sx={{ ml: 1, fontSize: "0.9em" }}
+          >
+            ({total})
+          </Typography>
         </Typography>
         {hasActiveFilters && (
           <Button
@@ -725,15 +733,19 @@ export default function AuditLogPage() {
             </TableContainer>
           )}
 
-          <Box display="flex" justifyContent="center" mt={4} pb={5}>
-            <Pagination
-              count={pageCount}
-              page={page}
-              onChange={(_, p) => setPage(p)}
-              color="primary"
-              size="large"
-            />
-          </Box>
+          {pageCount > 0 && (
+            <Box display="flex" flexDirection="column" alignItems="center" mt={4} mb={4} gap={1}>
+              {pageCount > 1 && (
+                <Pagination
+                  count={pageCount}
+                  page={page}
+                  onChange={(_, p) => setPage(p)}
+                  color="primary"
+                  size={isMobile ? "small" : "medium"}
+                />
+              )}
+            </Box>
+          )}
         </>
       )}
     </Box>

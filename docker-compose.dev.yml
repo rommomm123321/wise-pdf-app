@@ -1,0 +1,44 @@
+version: '3.8'
+
+# Development override: starts only db + tile-server.
+# Run with: docker-compose -f docker-compose.dev.yml up
+#
+# Frontend:  cd frontend && npm run dev   (localhost:5173)
+# Backend:   cd backend  && node server.js (localhost:3030)
+# DB:        Docker, port 5433
+# Tile srv:  Docker, port 8080
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: redlines_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_password}
+      POSTGRES_DB: ${POSTGRES_DB:-redlines_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  tile-server:
+    build:
+      context: ./tile-server
+      dockerfile: Dockerfile
+    container_name: redlines_tile_server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      # Points to the locally-running Node backend
+      - EXPRESS_URL=http://host.docker.internal:3030
+      - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_for_redlines}
+      - PDF_POOL_MAX_SIZE=50
+      - TILE_CACHE_MAX_ITEMS=5000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_data:

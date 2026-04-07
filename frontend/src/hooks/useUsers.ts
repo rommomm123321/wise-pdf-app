@@ -15,10 +15,10 @@ interface UsersResponse {
 }
 
 // Hook to get all users in the company (paginated)
-export function useUsers(page = 1, limit = 20) {
+export function useUsers(page = 1, limit = 20, search = '') {
   return useQuery({
-    queryKey: ['users', page, limit],
-    queryFn: () => apiFetch<UsersResponse>(`/api/users?page=${page}&limit=${limit}`),
+    queryKey: ['users', page, limit, search],
+    queryFn: () => apiFetch<UsersResponse>(`/api/users?page=${page}&limit=${limit}${search ? `&search=${encodeURIComponent(search)}` : ''}`),
     select: (res) => ({ users: res.data, pagination: res.pagination }),
     staleTime: 0,          // always re-fetch on mount
     refetchOnMount: true,

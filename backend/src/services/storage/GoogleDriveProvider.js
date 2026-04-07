@@ -160,6 +160,22 @@ class GoogleDriveProvider extends IStorageProvider {
       throw error;
     }
   }
+
+  async createFolder(name, parentFolderId) {
+    return null;
+  }
+
+  async deleteFolder(folderId) {
+    return true;
+  }
+
+  async renameItem(itemId, newName) {
+    return true;
+  }
+
+  async moveItem(itemId, newParentId) {
+    return true;
+  }
 }
 
 module.exports = GoogleDriveProvider;

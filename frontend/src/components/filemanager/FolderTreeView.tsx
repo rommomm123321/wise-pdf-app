@@ -46,6 +46,11 @@ function TreeNode({
 }) {
   const navigate = useNavigate();
   const { folderId, documentId } = useParams<{ folderId?: string; documentId?: string }>();
+  const [pendingDocId, setPendingDocId] = useState<string | null>(null);
+  // Clear pending state once the URL actually changed to the target
+  useEffect(() => {
+    if (pendingDocId && documentId === pendingDocId) setPendingDocId(null);
+  }, [documentId, pendingDocId]);
   
   // Check if this node or any child (folder or file) is active
   const isCurrentFolder = folderId === node.id;
@@ -81,6 +86,7 @@ function TreeNode({
   };
 
   const handleFileClick = (docId: string) => {
+    setPendingDocId(docId);
     navigate(`/projects/${projectId}/documents/${docId}`);
     onNavigate?.();
   };
@@ -135,14 +141,15 @@ function TreeNode({
           {/* Files */}
           {node.files && node.files.map((file) => {
             const isFileActive = documentId === file.id;
+            const isPending = pendingDocId === file.id && !isFileActive;
             return (
               <ListItemButton
                 key={file.id}
                 selected={isFileActive}
                 onClick={() => handleFileClick(file.id)}
-                sx={{ 
-                  borderRadius: 1, 
-                  pl: 4 + depth * 2, 
+                sx={{
+                  borderRadius: 1,
+                  pl: 4 + depth * 2,
                   py: 0.3,
                   '&.Mui-selected': {
                     bgcolor: 'error.main',
@@ -152,12 +159,15 @@ function TreeNode({
                   }
                 }}
               >
-                <ListItemIcon sx={{ minWidth: 28, color: isFileActive ? 'inherit' : 'error.main' }}>
-                  <PictureAsPdfIcon sx={{ fontSize: 16 }} />
+                <ListItemIcon sx={{ minWidth: 28, color: isFileActive ? 'inherit' : isPending ? 'warning.main' : 'error.main' }}>
+                  <PictureAsPdfIcon sx={{ fontSize: 16, opacity: isPending ? 0.5 : 1 }} />
                 </ListItemIcon>
                 <ListItemText
                   primary={file.name}
-                  primaryTypographyProps={{ fontSize: '0.75rem', noWrap: true, color: 'inherit' }}
+                  primaryTypographyProps={{
+                    fontSize: '0.75rem', noWrap: true, color: 'inherit',
+                    sx: isPending ? { filter: 'blur(4px)', opacity: 0.4, userSelect: 'none', transition: 'filter 0.2s' } : { filter: 'none', transition: 'filter 0.3s' }
+                  }}
                 />
               </ListItemButton>
             );

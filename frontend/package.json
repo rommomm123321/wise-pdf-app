@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "deploy": "tsc -b && vite build --outDir ../backend/public --emptyOutDir",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -18,6 +19,7 @@
     "@mui/x-date-pickers": "^8.27.2",
     "@react-oauth/google": "^0.13.4",
     "@tanstack/react-query": "^5.91.3",
+    "@tanstack/react-virtual": "^3.13.23",
     "@types/react-pdf": "^6.2.0",
     "axios": "^1.13.6",
     "dayjs": "^1.11.20",
@@ -33,6 +35,7 @@
     "react-i18next": "^16.5.8",
     "react-pdf": "^10.4.1",
     "react-router-dom": "^7.13.1",
+    "react-virtuoso": "^4.18.4",
     "socket.io-client": "^4.8.3",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.0.0",

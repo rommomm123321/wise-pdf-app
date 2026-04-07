@@ -12,7 +12,8 @@ async function processMentions({ markupId, documentId, projectId, actorId, prope
     // If it's a duplicated markup, we shouldn't send duplicate notifications
     if (properties?.isPastedOrDuplicated) return;
 
-    const combined = [properties?.subject, properties?.comment, properties?.text]
+    const threadTexts = Array.isArray(properties?.thread) ? properties.thread.map(e => e.text) : [];
+    const combined = [properties?.subject, properties?.comment, properties?.text, ...threadTexts]
       .filter(s => s && typeof s === 'string')
       .join(' ');
 

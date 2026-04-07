@@ -28,6 +28,14 @@ class UserController {
         return res.json({ status: 'ok', data: [], pagination: { page, limit, total: 0, totalPages: 0 } });
       }
 
+      const { search } = req.query;
+      if (search) {
+        where.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ];
+      }
+
       const [users, total] = await Promise.all([
         prisma.user.findMany({
           where,
@@ -403,6 +411,45 @@ class UserController {
         prisma.user.update({ where: { id: userId }, data: { companyId: null, roleId: null, tags: { set: [] } } }),
       ]);
       res.json({ status: 'ok' });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+  }
+
+  // GET /api/users/:userId/api-password — Admin views user's API password
+  static async getApiPassword(req, res) {
+    try {
+      const { userId } = req.params;
+      const currentUser = await prisma.user.findUnique({ where: { id: req.user.userId }, include: { role: true } });
+      const isAdmin = currentUser?.systemRole === 'GENERAL_ADMIN' || currentUser?.role?.name === 'Admin';
+      if (!isAdmin) return res.status(403).json({ error: 'Admin access required' });
+
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true, apiPassword: true } });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      // Generate password if not exists
+      if (!user.apiPassword) {
+        const crypto = require('crypto');
+        const pw = crypto.randomBytes(16).toString('hex');
+        await prisma.user.update({ where: { id: userId }, data: { apiPassword: pw } });
+        user.apiPassword = pw;
+      }
+
+      res.json({ status: 'ok', data: { email: user.email, apiPassword: user.apiPassword } });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+  }
+
+  // POST /api/users/:userId/api-password/regenerate — Admin regenerates user's API password
+  static async regenerateApiPassword(req, res) {
+    try {
+      const { userId } = req.params;
+      const currentUser = await prisma.user.findUnique({ where: { id: req.user.userId }, include: { role: true } });
+      const isAdmin = currentUser?.systemRole === 'GENERAL_ADMIN' || currentUser?.role?.name === 'Admin';
+      if (!isAdmin) return res.status(403).json({ error: 'Admin access required' });
+
+      const crypto = require('crypto');
+      const pw = crypto.randomBytes(16).toString('hex');
+      const user = await prisma.user.update({ where: { id: userId }, data: { apiPassword: pw }, select: { id: true, email: true, apiPassword: true } });
+
+      res.json({ status: 'ok', data: { email: user.email, apiPassword: user.apiPassword } });
     } catch (error) { res.status(500).json({ error: error.message }); }
   }
 }

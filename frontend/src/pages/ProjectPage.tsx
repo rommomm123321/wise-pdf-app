@@ -39,6 +39,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { exportDocumentWithMarkups } from "../utils/exportPdfWithMarkups";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import type { DropResult } from "@hello-pangea/dnd";
+import ArchiveIcon from "@mui/icons-material/Archive";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import ShareIcon from "@mui/icons-material/Share";
@@ -55,6 +56,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { useProject } from "../hooks/useProjects";
 import {
   useFolderContents,
@@ -93,7 +95,7 @@ import BulkActionsToolbar from "../components/layout/BulkActionsToolbar";
 import MoveToFolderDialog from "../components/filemanager/MoveToFolderDialog";
 import DocumentVersionsDialog from "../components/filemanager/DocumentVersionsDialog";
 import toast from "react-hot-toast";
-import { MOBILE_BREAKPOINT } from "../constants";
+import { MOBILE_BREAKPOINT, MOBILE_BREAKPOINT_PX } from "../constants";
 
 function FolderMobileCard({
   folder,
@@ -138,17 +140,15 @@ function FolderMobileCard({
     >
       <Box display="flex" justifyContent="space-between" alignItems="center">
         <Box display="flex" alignItems="center" gap={1.5} sx={{ minWidth: 0 }}>
-          {selectionMode && (
-            <Checkbox
-              size="small"
-              checked={isSelected}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelect(folder.id);
-              }}
-              sx={{ p: 0 }}
-            />
-          )}
+          <Checkbox
+            size="small"
+            checked={isSelected}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(folder.id);
+            }}
+            sx={{ p: 0 }}
+          />
           <FolderIcon color="primary" sx={{ fontSize: 24, flexShrink: 0 }} />
           <Typography variant="body1" fontWeight={700} noWrap>
             {folder.name}
@@ -289,17 +289,15 @@ function DocumentMobileCard({
     >
       <Box display="flex" justifyContent="space-between" alignItems="center">
         <Box display="flex" alignItems="center" gap={1.5} sx={{ minWidth: 0 }}>
-          {selectionMode && (
-            <Checkbox
-              size="small"
-              checked={isSelected}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelect(doc.id);
-              }}
-              sx={{ p: 0 }}
-            />
-          )}
+          <Checkbox
+            size="small"
+            checked={isSelected}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(doc.id);
+            }}
+            sx={{ p: 0 }}
+          />
           <PictureAsPdfIcon
             color="error"
             sx={{ fontSize: 24, flexShrink: 0 }}
@@ -359,13 +357,17 @@ function DocumentMobileCard({
             onClick={(e) => {
               e.stopPropagation();
               handleMenuClose();
-              fetch(`/api/documents/${doc.id}/proxy`, { headers: { Authorization: `Bearer ${mobileToken}` } })
-                .then(r => r.blob())
-                .then(blob => {
+              fetch(`/api/documents/${doc.id}/proxy`, {
+                headers: { Authorization: `Bearer ${mobileToken}` },
+              })
+                .then((r) => r.blob())
+                .then((blob) => {
                   const url = URL.createObjectURL(blob);
-                  const a = window.document.createElement('a');
-                  a.href = url; a.download = doc.name; a.click();
-                  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                  const a = window.document.createElement("a");
+                  a.href = url;
+                  a.download = doc.name;
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 10000);
                 });
             }}
           >
@@ -442,9 +444,6 @@ function DocumentMobileCard({
     </Paper>
   );
 }
-
-import FileDownloadIcon from "@mui/icons-material/FileDownload";
-
 export const FILE_MANAGER_COLUMNS = [
   { key: "name", label: "Name", required: true },
   { key: "type", label: "Type" },
@@ -452,8 +451,6 @@ export const FILE_MANAGER_COLUMNS = [
   { key: "version", label: "Version" },
   { key: "actions", label: "Actions" },
 ];
-
-import { MOBILE_BREAKPOINT_PX } from "../constants";
 
 export default function ProjectPage() {
   const { projectId, folderId } = useParams<{
@@ -478,15 +475,17 @@ export default function ProjectPage() {
   const activeFolderId = folderId || rootFolder?.id;
 
   const [docPage, setDocPage] = useState(1);
-  // Reset page when navigating to a different folder
-  useEffect(() => {
-    setDocPage(1);
-  }, [activeFolderId]);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // Reset page when navigating to a different folder or search changes
+  useEffect(() => { setDocPage(1); }, [activeFolderId]);
+  useEffect(() => { setDocPage(1); }, [debouncedSearch]);
 
   const { data: contents, isLoading: contentsLoading } = useFolderContents(
     activeFolderId,
     docPage,
-    50,
+    200,
+    debouncedSearch,
   );
   const docPagination = contents?.pagination;
 
@@ -522,6 +521,13 @@ export default function ProjectPage() {
   const deleteFolder = useDeleteFolder();
   const { mutate: performUpload, uploads } = useUploadDocument();
   const deleteDocument = useDeleteDocument();
+  const handleDeleteDoc = (id: string) => {
+    deleteDocument.mutate(id, {
+      onSuccess: () => toast.success(t("documentDeleted", "Document deleted successfully")),
+      onError: (err: any) => toast.error(err.message || t("errorDeleteDocument")),
+    });
+  };
+
   const replaceDocument = useReplaceDocument();
 
   const handleExportWithMarkups = useCallback(async (docId: string, docName: string) => {
@@ -560,13 +566,20 @@ export default function ProjectPage() {
       toast.error('Export failed', { id: toastId });
     }
   }, [token]);
+
   const bulkDeleteFolders = useBulkDeleteFolders();
   const bulkDeleteDocs = useBulkDeleteDocuments();
-  const moveFolder = useMoveFolder();
-  const bulkMoveFolders = useBulkMoveFolders();
-  const bulkMoveDocs = useBulkMoveDocuments();
+  
+  const moveFolderMut = useMoveFolder();
+  const bulkMoveFoldersMut = useBulkMoveFolders();
+  const bulkMoveDocsMut = useBulkMoveDocuments();
 
   const [searchQuery, setSearchQuery] = useState("");
+  // Debounce search to avoid hammering the server on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   const [groupBy, setGroupBy] = useState<GroupOption>("none");
   const [sortBy, setSortBy] = useState<SortOption>(
     () =>
@@ -638,10 +651,9 @@ export default function ProjectPage() {
 
       const fileArray = Array.from(files);
       performUpload({ folderId: targetFolderId, files: fileArray });
-    },
-    [canEdit, t, performUpload],
-  );
-
+      },
+      [canEdit, t, performUpload],
+      );
   const handlePageDragOver = useCallback(
     (e: React.DragEvent) => {
       if (!canEdit) return;
@@ -707,21 +719,33 @@ export default function ProjectPage() {
 
       if (isDraggingSelected) {
         if (selectedFolderIds.length > 0)
-          bulkMoveFolders.mutate({
+          bulkMoveFoldersMut.mutate({
             folderIds: selectedFolderIds,
             targetFolderId,
+          }, {
+            onSuccess: () => toast.success(t("itemsMoved", "Items moved successfully")),
+            onError: (err: any) => toast.error(err.message),
           });
         if (selectedDocIds.length > 0)
-          bulkMoveDocs.mutate({ documentIds: selectedDocIds, targetFolderId });
+          bulkMoveDocsMut.mutate({ documentIds: selectedDocIds, targetFolderId }, {
+            onSuccess: () => toast.success(t("itemsMoved", "Items moved successfully")),
+            onError: (err: any) => toast.error(err.message),
+          });
         setSelectedFolderIds([]);
         setSelectedDocIds([]);
       } else {
         if (type === "DOCUMENT") {
-          bulkMoveDocs.mutate({ documentIds: [draggableId], targetFolderId });
+          bulkMoveDocsMut.mutate({ documentIds: [draggableId], targetFolderId }, {
+            onSuccess: () => toast.success(t("documentMoved", "Document moved successfully")),
+            onError: (err: any) => toast.error(err.message),
+          });
         } else if (type === "FOLDER") {
-          moveFolder.mutate({
+          moveFolderMut.mutate({
             folderId: draggableId,
             parentId: targetFolderId,
+          }, {
+            onSuccess: () => toast.success(t("folderMoved", "Folder moved successfully")),
+            onError: (err: any) => toast.error(err.message),
           });
         }
       }
@@ -747,18 +771,14 @@ export default function ProjectPage() {
     }
   };
 
+  // Search is now handled server-side; just pass through what the server returns
   const filteredContents = useMemo(() => {
     if (!contents) return { folders: [], documents: [] };
-    const q = searchQuery.toLowerCase();
     return {
-      folders: (contents.folders || []).filter((f: any) =>
-        f.name.toLowerCase().includes(q),
-      ),
-      documents: (contents.documents || []).filter((d: any) =>
-        d.name.toLowerCase().includes(q),
-      ),
+      folders: contents.folders || [],
+      documents: contents.documents || [],
     };
-  }, [contents, searchQuery]);
+  }, [contents]);
 
   const sortedFolders = useMemo(() => {
     const result = [...filteredContents.folders];
@@ -902,9 +922,15 @@ export default function ProjectPage() {
 
   const handleBulkMove = (targetFolderId: string) => {
     if (selectedFolderIds.length > 0)
-      bulkMoveFolders.mutate({ folderIds: selectedFolderIds, targetFolderId });
+      bulkMoveFoldersMut.mutate({ folderIds: selectedFolderIds, targetFolderId }, {
+        onSuccess: () => toast.success(t("foldersMoved", "Folders moved successfully")),
+        onError: (err: any) => toast.error(err.message),
+      });
     if (selectedDocIds.length > 0)
-      bulkMoveDocs.mutate({ documentIds: selectedDocIds, targetFolderId });
+      bulkMoveDocsMut.mutate({ documentIds: selectedDocIds, targetFolderId }, {
+        onSuccess: () => toast.success(t("documentsMoved", "Documents moved successfully")),
+        onError: (err: any) => toast.error(err.message),
+      });
     setSelectedFolderIds([]);
     setSelectedDocIds([]);
   };
@@ -950,6 +976,21 @@ export default function ProjectPage() {
   };
 
   if (!projectId) return null;
+
+  // Archived company notice — blocks access to all content
+  if (project?.company?.isArchived) {
+    return (
+      <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" minHeight="60vh" gap={2} px={3}>
+        <ArchiveIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
+        <Typography variant="h5" fontWeight={700} color="text.secondary" textAlign="center">
+          {t('companyArchived', 'Company is archived')}
+        </Typography>
+        <Typography variant="body1" color="text.secondary" textAlign="center" maxWidth={480}>
+          {t('companyArchivedDesc', 'This company has been archived. All projects and files are inaccessible. Contact a General Admin to restore it.')}
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -1057,7 +1098,13 @@ export default function ProjectPage() {
                         ? "success"
                         : "primary"
                   }
-                  sx={{ height: 4, borderRadius: 2 }}
+                  sx={{
+                    height: 6,
+                    borderRadius: 1,
+                    "& .MuiLinearProgress-bar": {
+                      transition: "transform 0.4s linear",
+                    },
+                  }}
                 />
               </Box>
             ))}
@@ -1246,6 +1293,7 @@ export default function ProjectPage() {
                                           ...folder,
                                           projectId: projectId!,
                                         }}
+                                        oneDriveConnected={project?.company?.oneDriveConnected ?? true}
                                         onRename={(id, name) =>
                                           setRenameFolderData({ id, name })
                                         }
@@ -1493,7 +1541,7 @@ export default function ProjectPage() {
                                   projectId={projectId}
                                   onDelete={
                                     canDelete
-                                      ? (id) => deleteDocument.mutate(id)
+                                      ? handleDeleteDoc
                                       : undefined
                                   }
                                   onReplace={
@@ -1671,15 +1719,17 @@ export default function ProjectPage() {
             </Box>
           )}
 
-          {docPagination && docPagination.totalPages > 1 && (
-            <Box display="flex" justifyContent="center" mt={2} mb={2}>
-              <Pagination
-                count={docPagination.totalPages}
-                page={docPage}
-                onChange={(_, p) => setDocPage(p)}
-                color="primary"
-                size={isMobile ? "small" : "medium"}
-              />
+          {docPagination && (docPagination.totalPages > 1 || docPagination.totalDocs > 0) && (
+            <Box display="flex" flexDirection="column" alignItems="center" mt={3} mb={3} gap={1}>
+              {docPagination.totalPages > 1 && (
+                <Pagination
+                  count={docPagination.totalPages}
+                  page={docPage}
+                  onChange={(_, p) => setDocPage(p)}
+                  color="primary"
+                  size={isMobile ? "small" : "medium"}
+                />
+              )}
             </Box>
           )}
 
@@ -1782,16 +1832,14 @@ export default function ProjectPage() {
         onChange={(e) => {
           if (e.target.files && e.target.files.length > 0 && activeFolderId) {
             handleFilesDrop(activeFolderId, e.target.files);
-            toast.success(t("uploadStarted", "Upload started"));
           }
           e.target.value = ""; // reset so same file can be re-selected
-        }}
-      />
+        }}      />
       <ReplaceDocumentDialog
         open={!!replaceDocId}
         onClose={() => setReplaceDocId(null)}
         markupCount={
-          (contents?.data?.documents ?? []).find((d: any) => d.id === replaceDocId)?.allVersionMarkupsCount ?? 0
+          (contents?.documents ?? []).find((d: any) => d.id === replaceDocId)?.allVersionMarkupsCount ?? 0
         }
         onReplace={(file, transferMarkups) => {
           if (!replaceDocId) return;

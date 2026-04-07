@@ -13,16 +13,24 @@ import LockIcon from '@mui/icons-material/Lock';
 import DeleteIcon from '@mui/icons-material/Delete';
 
 export const STATUS_COLORS: Record<string, string> = {
+  // Bluebeam-style statuses
+  none: '#78909c',
+  accepted: '#2e7d32',
+  rejected: '#c62828',
+  cancelled: '#546e7a',
+  completed: '#1565c0',
+  // Legacy (backward compat — existing markups may still carry these)
   open: '#1976d2',
   'in-progress': '#ed6c02',
   resolved: '#2e7d32',
   closed: '#78909c',
 };
 export const STATUS_LABELS: Record<string, string> = {
-  open: 'Open',
-  'in-progress': 'In Progress',
-  resolved: 'Resolved',
-  closed: 'Closed',
+  none: 'None',
+  accepted: 'Accepted',
+  rejected: 'Rejected',
+  cancelled: 'Cancelled',
+  completed: 'Completed',
 };
 
 const typeIcons: Record<string, React.ReactNode> = {
@@ -75,16 +83,22 @@ const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect
         sx={{
           display: 'flex',
           alignItems: 'center',
-          gap: 1,
+          gap: 1.5,
+          mx: 0,
+          my: 0,
           px: 2,
-          py: 1,
+          py: 1.25,
           cursor: 'pointer',
+          borderRadius: 0,
+          bgcolor: selected ? alpha(gold, 0.08) : 'transparent',
           borderBottom: '1px solid',
           borderColor: 'divider',
-          bgcolor: selected ? alpha(gold, 0.08) : 'transparent',
-          transition: 'all 0.1s ease',
+          transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
           '&:hover': {
-            bgcolor: selected ? alpha(gold, 0.12) : alpha(theme.palette.text.primary, 0.03),
+            bgcolor: selected ? alpha(gold, 0.12) : alpha(theme.palette.text.primary, 0.04),
+            borderColor: selected ? alpha(gold, 0.3) : alpha(theme.palette.divider, 0.5),
+            transform: 'translateY(-1px)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
             '& .delete-btn': { opacity: 0.6 }
           },
         }}

@@ -8,15 +8,17 @@ services:
     container_name: redlines_app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3030:3030"
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=3030
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - TILE_SERVER_URL=http://tile-server:8080
     depends_on:
       - db
+      - tile-server
 
   db:
     image: postgres:15-alpine
@@ -31,5 +33,29 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  tile-server:
+    build:
+      context: ./tile-server
+      dockerfile: Dockerfile
+    container_name: redlines_tile_server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - EXPRESS_URL=http://app:3030
+      - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_for_redlines}
+      - PDF_POOL_MAX_SIZE=50
+      - TILE_CACHE_MAX_ITEMS=5000
+      - DISK_CACHE_DIR=/data/tile-cache
+    volumes:
+      - tile_cache:/data/tile-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   postgres_data:
+  # Persistent tile cache — survives container restarts.
+  # First user generates tiles; all subsequent users get them from disk cache instantly.
+  tile_cache:
+

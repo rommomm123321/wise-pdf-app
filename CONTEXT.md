@@ -429,6 +429,11 @@ File manager document item. Both use `useAuth()` internally for the clean PDF do
 | 11+ | Duplicate import fix (ProjectPage); clean PDF download via proxy (auth fix); "Download (clean PDF)" + "Download with markups" buttons in file manager 3-dot menus AND viewer toolbar; version upload markup transfer from ALL versions with deduplication |
 | 12 | Markup statuses/threads/comment counter/CSV export; touch/stylus support; lazy thumbnails; date filter; batch ops in sidebar |
 | 13 | **Bluebeam bi-directional compatibility**: `importAnnotationsFromPdf.ts` — 100% import rate of all PDF annotation types; automatic detection on PDF load; orange import button in toolbar; imported markups tagged with "BB" badge; export updated with `/NM`/`/T`/`/Subj` fields for Bluebeam tracking |
+| 14-15 | **Go Tile Server integration**: Architecture rework to use Go-based fast tile rendering (`pool`, `renderer`, `handler`). |
+| 16-18 | Split view migration to TileViewer, MarkupOverlay layered correctly, Export/Import improvements. |
+| 19-20 | Loading overlay added; Sidebar thumbnails loading logic fixed (token propagation); Wheel-handler rewrite for Bluebeam-style zoom-to-cursor. |
+| 21 | Fixed root DocumentViewPage to correctly use TileViewer. Added `fitPage` and `fitWidth` imperative API. |
+| 22 | **Gigantic PDF Streaming & Prioritization**: 800-900MB streaming directly to disk (0MB RAM spikes). `prioritizePage()` API added to skip loading non-visible tiles and immediately show clicked pages. Loading progress overlay UI (determinate progress for huge parsing). Zero-lag MarkupOverlay with `useLayoutEffect`. Dynamic `qualityForZoom` for WebP generation. |
 
 ---
 

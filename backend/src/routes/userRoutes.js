@@ -48,4 +48,8 @@ router.post('/:userId/projects/:projectId', lazy(getUserController, 'assignToPro
 router.delete('/:userId/projects/:projectId', lazy(getUserController, 'unassignFromProject'));
 router.patch('/:userId/projects/:projectId', lazy(getUserController, 'updateProjectPermissions'));
 
+// API password (for Revit plugin / external integrations)
+router.get('/:userId/api-password', lazy(getUserController, 'getApiPassword'));
+router.post('/:userId/api-password/regenerate', lazy(getUserController, 'regenerateApiPassword'));
+
 module.exports = router;

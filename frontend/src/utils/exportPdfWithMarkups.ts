@@ -12,7 +12,7 @@
  *  4. Save → download
  */
 
-import { PDFDocument, PDFName, PDFArray, PDFRef } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFArray, PDFRef, PDFDict, PDFString, PDFHexString } from 'pdf-lib';
 import { pdfjs } from 'react-pdf';
 
 // ─── Coordinate helpers ───────────────────────────────────────────────────────
@@ -70,6 +70,48 @@ function hexToRgbArr(hex: string): [number, number, number] {
     parseInt(hex.slice(3, 5), 16) / 255,
     parseInt(hex.slice(5, 7), 16) / 255,
   ];
+}
+
+// ─── Date formatting (PDF D: format) ─────────────────────────────────────────
+
+/** Convert ISO date string or Date to PDF date format D:YYYYMMDDHHmmss */
+function toPdfDate(input: string | Date | undefined | null): string | undefined {
+  if (!input) return undefined;
+  try {
+    const d = typeof input === 'string' ? new Date(input) : input;
+    if (isNaN(d.getTime())) return undefined;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `D:${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  } catch { return undefined; }
+}
+
+// ─── Standard markup properties (excluded from BSIColumnData) ─────────────────
+
+const STANDARD_PROPS = new Set([
+  'stroke', 'strokeWidth', 'lineStyle', 'fill', 'fillOpacity',
+  'subject', 'comment', 'text', 'locked', 'status', 'source',
+  'bluebeamAuthor', 'pdfAnnotId', 'fontSize', 'textColor', 'fontFamily',
+  'arrowStyle', 'showLength', 'originalWidth', 'originalHeight', 'pathLength',
+  'opacity', 'createdAt', 'updatedAt',
+]);
+
+/** Build a BSIColumnData PDFDict from custom (non-standard) properties */
+function buildBSIColumnData(
+  props: Record<string, unknown>,
+  doc: PDFDocument,
+): PDFDict | undefined {
+  const entries: [string, string][] = [];
+  for (const [key, val] of Object.entries(props)) {
+    if (STANDARD_PROPS.has(key)) continue;
+    if (val === undefined || val === null || val === '') continue;
+    entries.push([key, String(val)]);
+  }
+  if (entries.length === 0) return undefined;
+  const dict = doc.context.obj({});
+  for (const [key, val] of entries) {
+    (dict as PDFDict).set(PDFName.of(key), PDFHexString.fromText(val));
+  }
+  return dict as PDFDict;
 }
 
 // ─── Border-style dict ────────────────────────────────────────────────────────
@@ -210,7 +252,7 @@ function parsePenToInkList(
 // ─── Annotation registration helpers ─────────────────────────────────────────
 
 function registerAnnot(doc: PDFDocument, dict: Record<string, unknown>): PDFRef {
-  return doc.context.register(doc.context.obj(dict));
+  return doc.context.register(doc.context.obj(dict as any));
 }
 
 function addAnnotToPage(page: { node: { lookupMaybe: (...a: unknown[]) => unknown; set: (...a: unknown[]) => void } }, ref: PDFRef, doc: PDFDocument) {
@@ -223,6 +265,43 @@ function addAnnotToPage(page: { node: { lookupMaybe: (...a: unknown[]) => unknow
   }
 }
 
+// ─── Status annotation (Bluebeam / PDF spec ISO 32000-1 §12.5.6.3) ───────────
+// Bluebeam stores review statuses as Text reply annotations:
+//   /IRT → parent annotation ref
+//   /RT  → /R  (Reply)
+//   /StateModel (Review)
+//   /State (Accepted|Rejected|Cancelled|Completed|None)
+// This is the standard PDF review status mechanism, identical to what Acrobat uses.
+
+const STATUS_PDF_MAP: Record<string, string> = {
+  accepted: 'Accepted', rejected: 'Rejected',
+  cancelled: 'Cancelled', completed: 'Completed', none: 'None',
+  // legacy keys
+  open: 'None', resolved: 'Completed', closed: 'Completed', 'in-progress': 'None',
+};
+
+function addStatusAnnot(
+  parentRef: PDFRef,
+  status: string,
+  authorName: string,
+  doc: PDFDocument,
+  page: { node: { lookupMaybe: (...a: unknown[]) => unknown; set: (...a: unknown[]) => void } },
+): void {
+  const pdfState = STATUS_PDF_MAP[status.toLowerCase()];
+  if (!pdfState || pdfState === 'None') return; // None = no status annotation needed
+  addAnnotToPage(page, registerAnnot(doc, {
+    Type: PDFName.of('Annot'),
+    Subtype: PDFName.of('Text'),
+    IRT: parentRef,
+    RT: PDFName.of('R'),
+    StateModel: 'Review',
+    State: pdfState,
+    F: 28,  // Hidden | ReadOnly | Print (standard for status annotations)
+    Rect: [0, 0, 0, 0],
+    ...(authorName ? { T: authorName } : {}),
+  }), doc);
+}
+
 // ─── Per-markup annotation creator ───────────────────────────────────────────
 
 function addMarkupAnnotation(
@@ -232,7 +311,7 @@ function addMarkupAnnotation(
   pw: number,
   ph: number,
   docScale: string,
-): void {
+): PDFRef | undefined {
   const coords = (m.coordinates as Record<string, unknown>) || {};
   const props = (m.properties as Record<string, unknown>) || {};
 
@@ -240,7 +319,6 @@ function addMarkupAnnotation(
   const sw = (props.strokeWidth as number) || 2;
   const lineStyle = (props.lineStyle as string) || 'solid';
   const fillHex = props.fill as string | undefined;
-  const fillOpacity = props.fillOpacity !== undefined ? (props.fillOpacity as number) : 0.2;
   const angle = (coords.angle as number) || 0;
 
   const [sr, sg, sb] = hexToRgbArr(stroke);
@@ -253,6 +331,16 @@ function addMarkupAnnotation(
   const authorName = ((m as any).author?.name || (m as any).authorName || '') as string;
   const markupId = ((m as any).id || '') as string;
 
+  // Dates
+  const creationDate = toPdfDate((m as any).createdAt ?? props.createdAt as string | undefined);
+  const modDate = toPdfDate((m as any).updatedAt ?? props.updatedAt as string | undefined);
+
+  // Fill opacity for `ca` (lowercase = non-stroking / fill opacity per PDF spec)
+  const fillOpacity = props.fillOpacity !== undefined ? (props.fillOpacity as number) : (fillHex ? 0.2 : undefined);
+
+  // BSIColumnData — custom properties for Bluebeam round-trip
+  const bsiDict = buildBSIColumnData(props, doc);
+
   // Common base dict fields (NM = unique name for Bluebeam tracking, T = author, Subj = category)
   const base = (subtype: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
     Type: PDFName.of('Annot'),
@@ -260,13 +348,26 @@ function addMarkupAnnotation(
     F: 4,
     C: [sr, sg, sb],
     CA: 1,
+    ...(fillOpacity !== undefined ? { ca: fillOpacity } : {}),
     BS: bs,
     Contents: contents,
     ...(markupId ? { NM: markupId } : {}),
     ...(authorName ? { T: authorName } : {}),
     ...(subject ? { Subj: subject } : {}),
+    ...(creationDate ? { CreationDate: creationDate } : {}),
+    ...(modDate ? { M: modDate } : {}),
+    ...(bsiDict ? { BSIColumnData: bsiDict } : {}),
     ...extra,
   });
+
+  // Track the primary annotation ref so callers can attach a status annotation.
+  let primaryRef: PDFRef | undefined;
+  const add = (d: Record<string, unknown>): PDFRef => {
+    const ref = registerAnnot(doc, d);
+    if (!primaryRef) primaryRef = ref; // first call = primary (shape / cloud / line …)
+    addAnnotToPage(page, ref, doc);
+    return ref;
+  };
 
   const addPolygon = (
     pts: { x: number; y: number }[],
@@ -284,7 +385,7 @@ function addMarkupAnnotation(
       d.IT = PDFName.of('PolygonCloud');
       d.BE = { S: PDFName.of('C'), I: 1 };
     }
-    addAnnotToPage(page, registerAnnot(doc, d), doc);
+    add(d);
   };
 
   const type = m.type as string;
@@ -298,12 +399,12 @@ function addMarkupAnnotation(
       );
       // QuadPoints order for PDF: TL TR BL BR (in PDF bottom-left coords: top = higher Y)
       const qp = [x1, y2, x2, y2, x1, y1, x2, y1];
-      addAnnotToPage(page, registerAnnot(doc, {
+      add({
         ...base('Highlight'),
         Rect: [x1, y1, x2, y2],
         QuadPoints: qp,
         CA: 0.5,
-      }), doc);
+      });
     } else if (coords.path) {
       const origW = (props.originalWidth as number) || pw;
       const origH = (props.originalHeight as number) || ph;
@@ -315,16 +416,16 @@ function addMarkupAnnotation(
       if (inkList.length > 0) {
         const flat = inkList.flat();
         const bbox = vertsBBox(flat);
-        addAnnotToPage(page, registerAnnot(doc, {
+        add({
           ...base('Ink'),
           Rect: [bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2],
           InkList: inkList,
           CA: 0.5,
           BS: { W: (props.strokeWidth as number) || 12, S: PDFName.of('S') },
-        }), doc);
+        });
       }
     }
-    return;
+    return primaryRef;
   }
 
   // ── Rect / simple callout ───────────────────────────────────────────────────
@@ -336,14 +437,14 @@ function addMarkupAnnotation(
       const bbox = vertsBBox(verts);
       const d: Record<string, unknown> = { ...base('Polygon'), Rect: bbox, Vertices: verts };
       if (icColor) d.IC = icColor;
-      addAnnotToPage(page, registerAnnot(doc, d), doc);
+      add(d);
     } else {
       const [x1, y1, x2, y2] = normRectToPdf(l, t, w, h, pw, ph);
       const d: Record<string, unknown> = { ...base('Square'), Rect: [x1, y1, x2, y2] };
       if (icColor) d.IC = icColor;
-      addAnnotToPage(page, registerAnnot(doc, d), doc);
+      add(d);
     }
-    return;
+    return primaryRef;
   }
 
   // ── Cloud callout ───────────────────────────────────────────────────────────
@@ -359,7 +460,7 @@ function addMarkupAnnotation(
       BE: { S: PDFName.of('C'), I: 1 },
     };
     if (icColor) cloudD.IC = icColor;
-    addAnnotToPage(page, registerAnnot(doc, cloudD), doc);
+    add(cloudD); // primaryRef set here
 
     if (coords.textBox) {
       const tb = coords.textBox as Record<string, number>;
@@ -367,7 +468,7 @@ function addMarkupAnnotation(
       const tbCx = (tx1 + tx2) / 2, tbCy = (ty1 + ty2) / 2;
       const clCx = (cx1 + cx2) / 2, clCy = (cy1 + cy2) / 2;
       const fontSize = (props.fontSize as number) || 14;
-      addAnnotToPage(page, registerAnnot(doc, {
+      add({
         ...base('FreeText'),
         Rect: [tx1, ty1, tx2, ty2],
         Contents: contents,
@@ -375,9 +476,9 @@ function addMarkupAnnotation(
         IT: PDFName.of('FreeTextCallout'),
         CL: [tbCx, tbCy, clCx, clCy],
         BS: { W: sw, S: PDFName.of('S') },
-      }), doc);
+      });
     }
-    return;
+    return primaryRef;
   }
 
   // ── Circle / Ellipse ─────────────────────────────────────────────────────────
@@ -388,18 +489,18 @@ function addMarkupAnnotation(
     );
     const d: Record<string, unknown> = { ...base('Circle'), Rect: [x1, y1, x2, y2] };
     if (icColor) d.IC = icColor;
-    addAnnotToPage(page, registerAnnot(doc, d), doc);
-    return;
+    add(d);
+    return primaryRef;
   }
 
   // ── Polygon shapes ──────────────────────────────────────────────────────────
   const l = coords.left as number, t = coords.top as number;
   const w = coords.width as number, h = coords.height as number;
 
-  if (type === 'triangle') { addPolygon(triangleNorm(l, t, w, h)); return; }
-  if (type === 'diamond')  { addPolygon(diamondNorm(l, t, w, h));  return; }
-  if (type === 'hexagon')  { addPolygon(hexagonNorm(l, t, w, h));  return; }
-  if (type === 'star')     { addPolygon(starNorm(l, t, w, h));     return; }
+  if (type === 'triangle') { addPolygon(triangleNorm(l, t, w, h)); return primaryRef; }
+  if (type === 'diamond')  { addPolygon(diamondNorm(l, t, w, h));  return primaryRef; }
+  if (type === 'hexagon')  { addPolygon(hexagonNorm(l, t, w, h));  return primaryRef; }
+  if (type === 'star')     { addPolygon(starNorm(l, t, w, h));     return primaryRef; }
 
   // ── Cloud rectangle ─────────────────────────────────────────────────────────
   if (type === 'cloud') {
@@ -413,8 +514,8 @@ function addMarkupAnnotation(
       BE: { S: PDFName.of('C'), I: 1 },
     };
     if (icColor) d.IC = icColor;
-    addAnnotToPage(page, registerAnnot(doc, d), doc);
-    return;
+    add(d);
+    return primaryRef;
   }
 
   // ── Line ────────────────────────────────────────────────────────────────────
@@ -422,14 +523,14 @@ function addMarkupAnnotation(
     const [lx1, ly1] = toPdfPt(coords.x1 as number, coords.y1 as number, pw, ph);
     const [lx2, ly2] = toPdfPt(coords.x2 as number, coords.y2 as number, pw, ph);
     const margin = sw + 2;
-    addAnnotToPage(page, registerAnnot(doc, {
+    add({
       ...base('Line'),
       Rect: [Math.min(lx1, lx2) - margin, Math.min(ly1, ly2) - margin,
              Math.max(lx1, lx2) + margin, Math.max(ly1, ly2) + margin],
       L: [lx1, ly1, lx2, ly2],
       LE: [PDFName.of('None'), PDFName.of('None')],
-    }), doc);
-    return;
+    });
+    return primaryRef;
   }
 
   // ── Measure ─────────────────────────────────────────────────────────────────
@@ -438,7 +539,7 @@ function addMarkupAnnotation(
     const [lx2, ly2] = toPdfPt(coords.x2 as number, coords.y2 as number, pw, ph);
     const len = Math.sqrt((lx2 - lx1) ** 2 + (ly2 - ly1) ** 2);
     const margin = sw + 2;
-    addAnnotToPage(page, registerAnnot(doc, {
+    add({
       ...base('Line'),
       Rect: [Math.min(lx1, lx2) - margin, Math.min(ly1, ly2) - margin,
              Math.max(lx1, lx2) + margin, Math.max(ly1, ly2) + margin],
@@ -446,8 +547,8 @@ function addMarkupAnnotation(
       LE: [PDFName.of('None'), PDFName.of('None')],
       Contents: formatMeasurement(len, docScale),
       IT: PDFName.of('LineDimension'),
-    }), doc);
-    return;
+    });
+    return primaryRef;
   }
 
   // ── Arrow ───────────────────────────────────────────────────────────────────
@@ -458,15 +559,15 @@ function addMarkupAnnotation(
     const leStart = (arrowStyle === 'start' || arrowStyle === 'both') ? PDFName.of('OpenArrow') : PDFName.of('None');
     const leEnd   = (arrowStyle === 'end'   || arrowStyle === 'both') ? PDFName.of('OpenArrow') : PDFName.of('None');
     const margin = sw * 5 + 4;
-    addAnnotToPage(page, registerAnnot(doc, {
+    add({
       ...base('Line'),
       Rect: [Math.min(lx1, lx2) - margin, Math.min(ly1, ly2) - margin,
              Math.max(lx1, lx2) + margin, Math.max(ly1, ly2) + margin],
       L: [lx1, ly1, lx2, ly2],
       LE: [leStart, leEnd],
       IT: PDFName.of('LineArrow'),
-    }), doc);
-    return;
+    });
+    return primaryRef;
   }
 
   // ── Polyline ─────────────────────────────────────────────────────────────────
@@ -477,15 +578,15 @@ function addMarkupAnnotation(
       const bbox = vertsBBox(verts);
       const lenStr = props.showLength !== false
         ? formatMeasurement(polylineLength(pts, pw, ph), docScale) : '';
-      addAnnotToPage(page, registerAnnot(doc, {
+      add({
         ...base('PolyLine'),
         Rect: [bbox[0] - sw, bbox[1] - sw, bbox[2] + sw, bbox[3] + sw],
         Vertices: verts,
         LE: [PDFName.of('None'), PDFName.of('None')],
         Contents: lenStr,
-      }), doc);
+      });
     }
-    return;
+    return primaryRef;
   }
 
   // ── Pen (freehand ink) ───────────────────────────────────────────────────────
@@ -500,13 +601,13 @@ function addMarkupAnnotation(
     if (inkList.length > 0) {
       const flat = inkList.flat();
       const bbox = vertsBBox(flat);
-      addAnnotToPage(page, registerAnnot(doc, {
+      add({
         ...base('Ink'),
         Rect: [bbox[0] - sw, bbox[1] - sw, bbox[2] + sw, bbox[3] + sw],
         InkList: inkList,
-      }), doc);
+      });
     }
-    return;
+    return primaryRef;
   }
 
   // ── Text (FreeText) ──────────────────────────────────────────────────────────
@@ -529,9 +630,11 @@ function addMarkupAnnotation(
       BS: { W: (props.strokeWidth as number) > 0 ? sw : 0, S: PDFName.of('S') },
     };
     if (icColor) d.IC = icColor;
-    addAnnotToPage(page, registerAnnot(doc, d), doc);
-    return;
+    add(d);
+    return primaryRef;
   }
+
+  return primaryRef;
 }
 
 // ─── Core: add annotations to an already-loaded PDFDocument ──────────────────
@@ -541,6 +644,7 @@ async function annotateDoc(
   allMarkups: unknown[],
   docScale: string,
   hiddenLayers: string[],
+  tilePageSizes?: { w: number; h: number }[],
   onProgress?: (cur: number, total: number) => void,
 ): Promise<void> {
   const numPages = pdfDoc.getPageCount();
@@ -549,14 +653,34 @@ async function annotateDoc(
   for (let i = 0; i < numPages; i++) {
     onProgress?.(i, numPages);
     const page = pdfDoc.getPage(i);
-    const { width: pw, height: ph } = page.getMediaBox();
+
+    // Prefer tile-server page dimensions (already accounts for page rotation).
+    // pdf-lib's getMediaBox() ignores /Rotate, causing coordinate mismatch on rotated pages.
+    let pw: number, ph: number;
+    if (tilePageSizes && tilePageSizes[i]) {
+      pw = tilePageSizes[i].w;
+      ph = tilePageSizes[i].h;
+    } else {
+      // Fallback: use getSize() which respects /Rotate (unlike getMediaBox())
+      const size = page.getSize();
+      pw = size.width;
+      ph = size.height;
+    }
 
     const pageMarkups = (allMarkups as Record<string, unknown>[]).filter(
       m => (m.pageNumber as number) === i && !hidden.has(m.type as string),
     );
     for (const m of pageMarkups) {
       try {
-        addMarkupAnnotation(m, page as unknown as Parameters<typeof addMarkupAnnotation>[1], pdfDoc, pw, ph, docScale);
+        const ppage = page as unknown as Parameters<typeof addMarkupAnnotation>[1];
+        const primaryRef = addMarkupAnnotation(m, ppage, pdfDoc, pw, ph, docScale);
+        // Attach a PDF review-status annotation if this markup has a non-None status.
+        // This makes status visible and editable in Bluebeam / Acrobat.
+        const status = (m.properties as any)?.status as string | undefined;
+        const authorName = ((m as any).author?.name || (m as any).authorName || '') as string;
+        if (primaryRef && status && status !== 'none') {
+          addStatusAnnot(primaryRef, status, authorName, pdfDoc, ppage);
+        }
       } catch (e) {
         console.warn('Skipped markup annotation:', m.type, e);
       }
@@ -575,16 +699,18 @@ export interface ExportOptions {
   docScale: string;
   hiddenLayers?: string[];
   docName?: string;
+  /** Page dimensions from tile server (already accounts for rotation) — improves positioning accuracy */
+  tilePageSizes?: { w: number; h: number }[];
   onProgress?: (current: number, total: number) => void;
 }
 
 export async function exportPdfWithMarkups(opts: ExportOptions): Promise<void> {
-  const { pdfDocProxy, allMarkups, docScale, hiddenLayers = [], docName = 'export', onProgress } = opts;
+  const { pdfDocProxy, allMarkups, docScale, hiddenLayers = [], docName = 'export', tilePageSizes, onProgress } = opts;
 
   const rawBytes = await pdfDocProxy.getData();
   const pdfDoc = await PDFDocument.load(rawBytes);
 
-  await annotateDoc(pdfDoc, allMarkups, docScale, hiddenLayers, onProgress);
+  await annotateDoc(pdfDoc, allMarkups, docScale, hiddenLayers, tilePageSizes, onProgress);
 
   const outBytes = await pdfDoc.save();
   triggerDownload(outBytes, `${docName.replace(/\.pdf$/i, '')}_with_markups.pdf`);
@@ -624,7 +750,7 @@ export async function exportDocumentWithMarkups(opts: StandaloneExportOptions): 
   const allMarkups: unknown[] = markupsJson?.data ?? [];
 
   const pdfDoc = await PDFDocument.load(rawBytes);
-  await annotateDoc(pdfDoc, allMarkups, docScale, hiddenLayers, onProgress);
+  await annotateDoc(pdfDoc, allMarkups, docScale, hiddenLayers, undefined, onProgress);
 
   const outBytes = await pdfDoc.save();
   triggerDownload(outBytes, `${docName.replace(/\.pdf$/i, '')}_with_markups.pdf`);

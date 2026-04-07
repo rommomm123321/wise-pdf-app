@@ -1,4 +1,4 @@
-import { createTheme, type Theme } from '@mui/material/styles';
+import { createTheme, type Theme, alpha } from '@mui/material/styles';
 
 // Brand colors
 const GOLD_DARK = '#F3C24B';    // Primary for dark theme — rgb(243, 194, 75)
@@ -21,14 +21,14 @@ export function getTheme(mode: 'dark' | 'light'): Theme {
         contrastText: '#FFFFFF',
       },
       background: {
-        default: isDark ? '#0F0F0F' : '#F4F5F7',
-        paper: isDark ? '#1A1A1A' : '#FFFFFF',
+        default: isDark ? '#101010' : '#F8F9FA',
+        paper: isDark ? '#1C1C1C' : '#FFFFFF',
       },
       text: {
         primary: isDark ? '#FFFFFF' : '#1A1A2E',
         secondary: isDark ? '#94A3B8' : '#5A6478',
       },
-      divider: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+      divider: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
       error: {
         main: isDark ? '#F87171' : '#DC2626',
       },
@@ -96,15 +96,34 @@ export function getTheme(mode: 'dark' | 'light'): Theme {
           },
         },
       },
+      MuiPaper: {
+        styleOverrides: {
+          root: {
+            backgroundImage: 'none',
+          },
+          elevation1: {
+            boxShadow: isDark
+              ? '0 1px 6px rgba(0,0,0,0.4)'
+              : '0 1px 4px rgba(0,0,0,0.06), 0 0 1px rgba(0,0,0,0.06)',
+          },
+        },
+      },
       MuiCard: {
         styleOverrides: {
           root: {
             backgroundImage: 'none',
-            backgroundColor: isDark ? '#1A1A1A' : '#FFFFFF',
-            borderRadius: 12,
-            ...(isDark
-              ? {}
-              : { boxShadow: '0 1px 4px rgba(0,0,0,0.06), 0 0 1px rgba(0,0,0,0.08)' }),
+            backgroundColor: isDark ? '#242424' : '#FFFFFF',
+            borderRadius: 14,
+            border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)'}`,
+            boxShadow: isDark
+              ? 'none'
+              : '0 1px 4px rgba(0,0,0,0.05), 0 0 1px rgba(0,0,0,0.06)',
+            transition: 'box-shadow 0.2s, transform 0.15s',
+            '&:hover': {
+              boxShadow: isDark
+                ? '0 4px 16px rgba(0,0,0,0.5)'
+                : '0 4px 16px rgba(0,0,0,0.1)',
+            },
           },
         },
       },
@@ -215,29 +234,75 @@ export function getTheme(mode: 'dark' | 'light'): Theme {
       MuiTableCell: {
         styleOverrides: {
           root: {
-            paddingTop: 4,
-            paddingBottom: 4,
+            paddingTop: 6,
+            paddingBottom: 6,
             paddingLeft: 16,
             paddingRight: 16,
-            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
             '&.MuiTableCell-head': {
-              paddingTop: 8,
-              paddingBottom: 8,
-              backgroundColor: isDark ? '#1F1F1F' : '#F9FAFB',
+              paddingTop: 10,
+              paddingBottom: 10,
+              backgroundColor: isDark ? '#181818' : '#F8F9FA',
+              fontWeight: 600,
+              fontSize: '0.78rem',
+              letterSpacing: '0.02em',
+              color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)',
+              textTransform: 'uppercase',
             },
+          },
+        },
+      },
+      MuiTableRow: {
+        styleOverrides: {
+          root: {
+            transition: 'background-color 0.12s',
+            '&.MuiTableRow-hover:hover': {
+              backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+            },
+          },
+        },
+      },
+      MuiTableContainer: {
+        styleOverrides: {
+          root: {
+            borderRadius: 12,
+            border: `1px solid ${isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'}`,
+            boxShadow: 'none',
+            overflow: 'hidden',
           },
         },
       },
       MuiTextField: {
         styleOverrides: {
           root: {
-            ...(isDark ? {} : {
-              '& .MuiOutlinedInput-root': {
-                '& fieldset': {
-                  borderColor: 'rgba(0,0,0,0.15)',
-                },
+            '& .MuiOutlinedInput-root': {
+              borderRadius: 10,
+              transition: 'box-shadow 0.15s',
+              '& fieldset': {
+                borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.13)',
+                transition: 'border-color 0.15s',
               },
-            }),
+              '&:hover fieldset': {
+                borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.25)',
+              },
+              '&.Mui-focused': {
+                boxShadow: `0 0 0 3px ${alpha(isDark ? GOLD_DARK : GOLD_LIGHT, 0.18)}`,
+              },
+            },
+          },
+        },
+      },
+      MuiOutlinedInput: {
+        styleOverrides: {
+          root: {
+            borderRadius: 10,
+          },
+        },
+      },
+      MuiSelect: {
+        styleOverrides: {
+          outlined: {
+            borderRadius: 10,
           },
         },
       },

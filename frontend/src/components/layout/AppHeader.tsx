@@ -37,7 +37,12 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isDocView = location.pathname.includes('/documents/');
-  const showBurger = isMobile || isDocView;
+  const isAdmin = user?.systemRole === 'GENERAL_ADMIN' || user?.role?.name === 'Admin';
+  const inProject = location.pathname.startsWith('/projects/');
+  // Show burger only when sidebar has meaningful content:
+  // always on desktop docview, on mobile only when user has multiple nav items OR is inside a project
+  const hasSidebarContent = isAdmin || inProject;
+  const showBurger = isDocView || (isMobile && hasSidebarContent);
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 

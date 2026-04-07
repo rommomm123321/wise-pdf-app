@@ -228,6 +228,11 @@ function convertAnnotation(
 
   if (SKIP_SUBTYPES.has(sub)) return null;
 
+  // Skip PDF review-status annotations (Text reply with /StateModel = Review).
+  // These are handled in a separate pass in detectAndParseAnnotations() and applied
+  // as properties on the parent markup — they must not become standalone markups.
+  if (annot.inReplyTo && annot.stateModel === 'Review') return null;
+
   // Guard: must have a valid rect
   const rect: number[] = Array.isArray(annot.rect) && annot.rect.length === 4
     ? annot.rect : [0, 0, pw * 0.1, ph * 0.1];
@@ -243,6 +248,24 @@ function convertAnnotation(
   const authorName = annot.title ?? '';   // /T is the author name in Bluebeam
   const intent: string | undefined = annot.intent;
 
+  // Dates from PDF
+  const creationDate = annot.creationDate ?? annot.createdDate ?? undefined;
+  const modificationDate = annot.modificationDate ?? annot.modDate ?? undefined;
+
+  // BSIColumnData — Bluebeam custom properties
+  const bsiCustom: Record<string, unknown> = {};
+  if (annot.BSIColumnData && typeof annot.BSIColumnData === 'object') {
+    for (const [k, v] of Object.entries(annot.BSIColumnData)) {
+      if (v !== undefined && v !== null) bsiCustom[k] = String(v);
+    }
+  }
+  // Some pdfjs versions expose raw dict entries — scan for BSI-prefixed keys
+  for (const key of Object.keys(annot)) {
+    if (key.startsWith('BSI') && key !== 'BSIColumnData' && annot[key] !== undefined) {
+      bsiCustom[key] = String(annot[key]);
+    }
+  }
+
   const base = (): Record<string, unknown> => ({
     stroke,
     strokeWidth: strokeWidth || 1,
@@ -252,6 +275,10 @@ function convertAnnotation(
     ...(authorName ? { bluebeamAuthor: authorName } : {}),
     source: 'bluebeam_import',
     ...(annot.id ? { pdfAnnotId: annot.id } : {}),
+    ...(opacity !== 1 ? { opacity } : {}),
+    ...(creationDate ? { createdAt: creationDate } : {}),
+    ...(modificationDate ? { updatedAt: modificationDate } : {}),
+    ...bsiCustom,
   });
 
   // ── Highlight (rect) ────────────────────────────────────────────────────────
@@ -412,6 +439,50 @@ function convertAnnotation(
     const textColor = getFontColor(annot);
     const content   = text;
 
+    // Detect callout: FreeTextCallout intent or CL (callout line) present
+    const isCallout = intent === 'FreeTextCallout'
+      || (Array.isArray(annot.calloutLine) && annot.calloutLine.length >= 4)
+      || (Array.isArray(annot.CL) && annot.CL.length >= 4);
+
+    if (isCallout) {
+      const nRect = normRect(rect, pw, ph);
+      const cl: number[] = annot.calloutLine ?? annot.CL ?? [];
+      // CL has 4 or 6 values: [x1,y1,x2,y2] or [x1,y1,knee_x,knee_y,x2,y2]
+      // We store the textbox as the rect and build a cloud around the anchor point
+      const calloutCoords: Record<string, unknown> = {
+        ...nRect,
+        textBox: nRect,
+      };
+      if (cl.length >= 4) {
+        // Anchor point (the pointed-to location) is the last pair
+        const anchorX = cl[cl.length - 2];
+        const anchorY = cl[cl.length - 1];
+        calloutCoords.calloutLine = cl.map((v: number, i: number) =>
+          i % 2 === 0 ? v / pw : 1 - v / ph
+        );
+        // Create a small cloud region around anchor
+        const np = normPt(anchorX, anchorY, pw, ph);
+        calloutCoords.cloud = {
+          left: np.x - 0.02, top: np.y - 0.02,
+          width: 0.04, height: 0.04,
+        };
+      }
+      return {
+        type: 'callout',
+        pageNumber: pageIndex,
+        coordinates: calloutCoords,
+        properties: {
+          ...base(),
+          text: content,
+          comment: content,
+          fontSize,
+          textColor,
+          fontFamily: annot.defaultAppearanceData?.fontName ?? 'Helvetica',
+          strokeWidth: strokeWidth || 1,
+        },
+      };
+    }
+
     return {
       type: 'text',
       pageNumber: pageIndex,
@@ -499,10 +570,20 @@ function convertAnnotation(
  *
  * Never throws — per-page errors are swallowed with a console.warn.
  */
+// Map PDF state string to our internal status key
+const PDF_STATE_TO_STATUS: Record<string, string> = {
+  Accepted: 'accepted', Rejected: 'rejected',
+  Cancelled: 'cancelled', Completed: 'completed', None: 'none',
+};
+
 export async function detectAndParseAnnotations(
   pdfDoc: { numPages: number; getPage: (n: number) => Promise<any> },
 ): Promise<ImportedMarkup[]> {
   const result: ImportedMarkup[] = [];
+  // Map annotation id (NM field) → ImportedMarkup, for status resolution
+  const idToMarkup = new Map<string, ImportedMarkup>();
+  // Collected status annotations: { parentId, state }
+  const pendingStatuses: { parentId: string; state: string }[] = [];
 
   for (let i = 0; i < pdfDoc.numPages; i++) {
     let page: any;
@@ -528,8 +609,19 @@ export async function detectAndParseAnnotations(
 
     for (const annot of annots) {
       try {
+        // Collect status reply annotations for second pass
+        if (annot.inReplyTo && annot.stateModel === 'Review' && annot.state) {
+          pendingStatuses.push({ parentId: annot.inReplyTo, state: annot.state });
+          continue;
+        }
+
         const mk = convertAnnotation(annot, i, pw, ph);
-        if (mk) result.push(mk);
+        if (mk) {
+          result.push(mk);
+          // Index by annotation id so status annotations can find their parent.
+          // pdfjs uses /NM as the id if present, which matches what we export.
+          if (annot.id) idToMarkup.set(String(annot.id), mk);
+        }
       } catch (e) {
         // Never lose an annotation silently — log and skip
         if (process.env.NODE_ENV !== 'production') {
@@ -537,6 +629,17 @@ export async function detectAndParseAnnotations(
             subtype: annot?.subtype, id: annot?.id, error: e,
           });
         }
+      }
+    }
+  }
+
+  // Second pass: apply statuses to parent markups
+  for (const { parentId, state } of pendingStatuses) {
+    const mk = idToMarkup.get(parentId);
+    if (mk) {
+      const status = PDF_STATE_TO_STATUS[state];
+      if (status && status !== 'none') {
+        mk.properties.status = status;
       }
     }
   }
