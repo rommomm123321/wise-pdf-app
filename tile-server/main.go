@@ -81,6 +81,10 @@ func main() {
 	// Full-text search within a prepared document
 	r.HandleFunc("/search/{docId}", tileHandler.SearchHandler).Methods("GET", "OPTIONS")
 
+	// Detect changed regions between two PDF pages (returns JSON bounding boxes)
+	// Must be registered before the tile compare route so "detect" matches literally
+	r.HandleFunc("/compare/detect/{docId1}/{docId2}/{page1}/{page2}", tileHandler.DetectChanges).Methods("GET", "OPTIONS")
+
 	// Visual diff comparison between two PDF pages
 	r.HandleFunc("/compare/{docId1}/{docId2}/{page1}/{page2}/{zoom}/{x}/{y}", tileHandler.CompareHandler).Methods("GET", "OPTIONS")
 

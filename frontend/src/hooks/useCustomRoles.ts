@@ -23,11 +23,13 @@ export interface CompanyTag {
   companyId: string;
 }
 
-export function useCustomRoles() {
+export function useCustomRoles(companyId?: string) {
   return useQuery({
-    queryKey: ['custom-roles'],
-    queryFn: () =>
-      apiFetch<{ status: string; data: CustomRole[] }>('/api/custom-roles').then((r) => r.data),
+    queryKey: ['custom-roles', companyId ?? ''],
+    queryFn: () => {
+      const url = companyId ? `/api/custom-roles?companyId=${companyId}` : '/api/custom-roles';
+      return apiFetch<{ status: string; data: CustomRole[] }>(url).then((r) => r.data);
+    },
   });
 }
 

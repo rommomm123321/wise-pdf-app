@@ -118,7 +118,7 @@ const MarkupListItem = memo(function MarkupListItem({ markup, selected, onSelect
           </Typography>
           <Typography variant="caption" color="text.secondary" noWrap sx={{ fontSize: '0.62rem', lineHeight: 1.2 }}>
             Page {(markup.pageNumber || 0) + 1}
-            {markup.author?.name && ` · ${markup.author.name}`}
+            {(markup.properties?.bluebeamAuthor || markup.author?.name) && ` · ${markup.properties?.bluebeamAuthor || markup.author?.name}`}
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>

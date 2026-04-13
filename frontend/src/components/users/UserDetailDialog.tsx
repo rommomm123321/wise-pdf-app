@@ -87,7 +87,7 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
 
   const { data: projectsData } = useProjects(1, 100);
   const allProjects = projectsData?.projects ?? [];
-  const { data: customRoles = [] } = useCustomRoles();
+  const { data: customRoles = [] } = useCustomRoles(user?.companyId ?? undefined);
   const { data: allCompaniesData } = useAllCompanies();
   const allCompanies = allCompaniesData || [];
   
@@ -131,6 +131,8 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
   const [newTagText, setNewTagText] = useState('');
   const [newTagColor, setNewTagColor] = useState('#1565c0');
   const [selectiveProject, setSelectiveProject] = useState<any>(null);
+  const [confirmCompanyOpen, setConfirmCompanyOpen] = useState(false);
+  const [pendingCompanyId, setPendingCompanyId] = useState<string>('');
 
   const isMobile = useMediaQuery('(max-width:600px)');
   const isGeneralAdmin = currentUser?.systemRole === 'GENERAL_ADMIN';
@@ -232,9 +234,8 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
                   value={user.companyId || ''}
                   onChange={(e) => {
                     if (e.target.value !== user.companyId) {
-                      if (window.confirm(t('confirmChangeCompany', 'Changing company will remove all current project assignments and tags. Proceed?'))) {
-                        updateRole.mutate({ userId: user.id, companyId: e.target.value });
-                      }
+                      setPendingCompanyId(e.target.value as string);
+                      setConfirmCompanyOpen(true);
                     }
                   }}
                   displayEmpty
@@ -298,12 +299,8 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
             {user.tags?.length === 0 && <Typography variant="body2" color="text.secondary"><em>{t('noTags', 'No tags')}</em></Typography>}
           </Box>
           {canManageUser && (
-            <Box 
-              display="flex" 
-              flexDirection={isMobile ? 'column' : 'row'} 
-              gap={1} 
-              alignItems={isMobile ? 'stretch' : 'center'}
-            >
+            <Box display="flex" flexDirection="column" gap={1}>
+              {/* Add existing tag */}
               <Select
                 size="small"
                 displayEmpty
@@ -314,7 +311,6 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
                     updateUserTags.mutate({ userId: user.id, tagIds: [...currentTagIds, e.target.value] });
                   }
                 }}
-                sx={{ minWidth: 160 }}
               >
                 <MenuItem value="" disabled>{t('addTag', 'Add tag...')}</MenuItem>
                 {companyTags.filter((ct: any) => !(user.tags || []).some((ut: any) => ut.id === ct.id)).map((ct: any) => (
@@ -326,22 +322,46 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
                   </MenuItem>
                 ))}
               </Select>
-              <Box display="flex" alignItems="center" gap={0.5}>
-                <input
-                  type="color"
-                  value={newTagColor}
-                  onChange={(e) => setNewTagColor(e.target.value)}
-                  style={{ width: 28, height: 28, border: 'none', padding: 0, cursor: 'pointer', background: 'none', borderRadius: 4 }}
-                  title="Tag color"
-                />
+
+              {/* Create new tag */}
+              <Box
+                sx={{
+                  display: 'flex', alignItems: 'center', gap: 1,
+                  border: 1, borderColor: 'divider', borderRadius: 1,
+                  px: 1, py: 0.5,
+                  '&:focus-within': { borderColor: 'primary.main' },
+                }}
+              >
+                <Tooltip title={t('tagColor', 'Tag color')}>
+                  <Box
+                    component="label"
+                    sx={{
+                      width: 22, height: 22, borderRadius: '50%',
+                      bgcolor: newTagColor, cursor: 'pointer', flexShrink: 0,
+                      border: '2px solid', borderColor: 'divider',
+                      overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <input
+                      type="color"
+                      value={newTagColor}
+                      onChange={(e) => setNewTagColor(e.target.value)}
+                      style={{ opacity: 0, position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}
+                    />
+                  </Box>
+                </Tooltip>
                 <TextField
                   size="small"
                   placeholder={t('newTag', 'New tag...')}
                   value={newTagText}
                   onChange={(e: any) => setNewTagText(e.target.value)}
-                  sx={{ minWidth: 120 }}
+                  variant="standard"
+                  InputProps={{ disableUnderline: true, sx: { fontSize: '0.85rem' } }}
+                  sx={{ flex: 1 }}
                   onKeyDown={(e: any) => {
                     if (e.key === 'Enter' && newTagText.trim()) {
+                      e.preventDefault();
+                      e.stopPropagation();
                       createTag.mutate({ text: newTagText.trim(), color: newTagColor }, {
                         onSuccess: (res: any) => {
                           const tagId = res?.data?.id;
@@ -350,11 +370,15 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
                             updateUserTags.mutate({ userId: user.id, tagIds: [...currentTagIds, tagId] });
                           }
                           setNewTagText('');
-                        }
+                        },
+                        onError: (err: any) => {
+                          toast.error(err?.message || 'Failed to create tag');
+                        },
                       });
                     }
                   }}
                 />
+                <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.7rem', flexShrink: 0 }}>Enter</Typography>
               </Box>
             </Box>
           )}
@@ -591,6 +615,33 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
           onToggleFolder={onToggleFolder}
         />
       )}
+
+      {/* Company change confirmation */}
+      <Dialog open={confirmCompanyOpen} onClose={() => setConfirmCompanyOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700, fontSize: '1rem' }}>
+          {t('changeCompany', 'Change Company?')}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {t('confirmChangeCompany', 'Changing company will remove all current project assignments and tags. This action cannot be undone.')}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmCompanyOpen(false)} color="inherit">
+            {t('cancelBtn', 'Cancel')}
+          </Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => {
+              updateRole.mutate({ userId: user.id, companyId: pendingCompanyId });
+              setConfirmCompanyOpen(false);
+            }}
+          >
+            {t('proceed', 'Proceed')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 }

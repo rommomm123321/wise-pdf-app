@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useMarkupPresets } from '../../hooks/useMarkupPresets';
 import {
   AppBar,
   Toolbar,
@@ -9,6 +10,8 @@ import {
   Menu,
   MenuItem,
   Button,
+  ListItemIcon,
+  ListItemText,
   useMediaQuery,
   useTheme,
 } from '@mui/material';
@@ -16,6 +19,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import ExitToAppIcon from '@mui/icons-material/ExitToApp';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -23,6 +27,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import SearchBar from '../search/SearchBar';
 import NotificationBell from './NotificationBell';
+import UserSettingsDialog from '../users/UserSettingsDialog';
+import { useMyProjectPermissions } from '../../hooks/usePermissions';
 
 interface AppHeaderProps {
   onToggleSidebar: () => void;
@@ -30,6 +36,7 @@ interface AppHeaderProps {
 
 export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
   const { user, logout, isImpersonating, stopImpersonating } = useAuth();
+  const { data: toolChestPresets = [] } = useMarkupPresets();
   const { mode, toggleTheme } = useThemeMode();
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -39,12 +46,19 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
   const isDocView = location.pathname.includes('/documents/');
   const isAdmin = user?.systemRole === 'GENERAL_ADMIN' || user?.role?.name === 'Admin';
   const inProject = location.pathname.startsWith('/projects/');
+  // Extract projectId from URL for permission check (e.g. /projects/:id/...)
+  const projectIdFromUrl = location.pathname.match(/\/projects\/([^/]+)/)?.[1];
+  const { data: myPerms } = useMyProjectPermissions(projectIdFromUrl);
+  const canMarkup = isAdmin || myPerms?.canMarkup !== false;
   // Show burger only when sidebar has meaningful content:
   // always on desktop docview, on mobile only when user has multiple nav items OR is inside a project
   const hasSidebarContent = isAdmin || inProject;
   const showBurger = isDocView || (isMobile && hasSidebarContent);
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const handleCloseMenu = () => setAnchorEl(null);
 
   useEffect(() => {
     const company = localStorage.getItem('welcomeToCompany');
@@ -140,16 +154,28 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
                 <Typography variant="caption" color="text.secondary">{user?.role?.name || user?.systemRole}</Typography>
               </Box>
             </MenuItem>
+            <MenuItem onClick={() => { setSettingsOpen(true); handleCloseMenu(); }}>
+              <ListItemIcon><SettingsIcon fontSize="small" /></ListItemIcon>
+              <ListItemText>Settings</ListItemText>
+            </MenuItem>
             {isImpersonating && (
-              <MenuItem onClick={() => { setAnchorEl(null); stopImpersonating(); }}>
+              <MenuItem onClick={() => { handleCloseMenu(); stopImpersonating(); }}>
                 <ExitToAppIcon fontSize="small" sx={{ mr: 1 }} />
                 {t('stopImpersonating', 'Back to admin')}
               </MenuItem>
             )}
             <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
-              Logout
+              <ListItemIcon><ExitToAppIcon fontSize="small" sx={{ color: 'error.main' }} /></ListItemIcon>
+              <ListItemText>Logout</ListItemText>
             </MenuItem>
           </Menu>
+          <UserSettingsDialog
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            user={user ? { id: user.id, name: user.name, email: user.email, systemRole: user.systemRole } : null}
+            presets={toolChestPresets as any}
+            canMarkup={canMarkup}
+          />
         </Toolbar>
       </AppBar>
     </>

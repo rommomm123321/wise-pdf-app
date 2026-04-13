@@ -375,9 +375,19 @@ class UserController {
     try {
       const { text, color } = req.body;
       const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-      const tag = await prisma.companyTag.create({ data: { text, color: color || '#9E9E9E', companyId: user.companyId } });
+      let companyId = user.companyId;
+      // GENERAL_ADMIN without company — use first available company
+      if (!companyId && user.systemRole === 'GENERAL_ADMIN') {
+        const first = await prisma.company.findFirst({ select: { id: true } });
+        companyId = first?.id || null;
+      }
+      if (!companyId) return res.status(400).json({ error: 'No company found' });
+      const tag = await prisma.companyTag.create({ data: { text, color: color || '#9E9E9E', companyId } });
       res.status(201).json({ status: 'ok', data: tag });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+      if (error.code === 'P2002') return res.status(400).json({ error: `Tag "${text}" already exists` });
+      res.status(500).json({ error: error.message });
+    }
   }
 
   static async deleteCompanyTag(req, res) {

@@ -91,8 +91,8 @@ const STANDARD_PROPS = new Set([
   'stroke', 'strokeWidth', 'lineStyle', 'fill', 'fillOpacity',
   'subject', 'comment', 'text', 'locked', 'status', 'source',
   'bluebeamAuthor', 'pdfAnnotId', 'fontSize', 'textColor', 'fontFamily',
-  'arrowStyle', 'showLength', 'originalWidth', 'originalHeight', 'pathLength',
-  'opacity', 'createdAt', 'updatedAt',
+  'arrowStyle', 'originalWidth', 'originalHeight', 'pathLength',
+  'opacity', 'strokeOpacity', 'createdAt', 'updatedAt',
 ]);
 
 /** Build a BSIColumnData PDFDict from custom (non-standard) properties */
@@ -341,13 +341,34 @@ function addMarkupAnnotation(
   // BSIColumnData — custom properties for Bluebeam round-trip
   const bsiDict = buildBSIColumnData(props, doc);
 
+  // Round-trip: _pdf_* keys → native PDF annotation keys
+  const pdfRoundTrip: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(props)) {
+    if (!key.startsWith('_pdf_') || val === undefined || val === null || val === '') continue;
+    const pdfKey = key.slice(5); // strip '_pdf_' prefix
+    // Skip keys handled elsewhere (LE = line endings, already handled above)
+    if (pdfKey === 'LE') continue;
+    try {
+      if (pdfKey === 'Measure') {
+        pdfRoundTrip.Measure = JSON.parse(val as string);
+      } else if (pdfKey === 'BM' || pdfKey === 'IT') {
+        pdfRoundTrip[pdfKey] = PDFName.of(String(val));
+      } else if (pdfKey === 'OC') {
+        pdfRoundTrip.OC = JSON.parse(val as string);
+      } else {
+        pdfRoundTrip[pdfKey] = String(val);
+      }
+    } catch { /* skip malformed round-trip values */ }
+  }
+
   // Common base dict fields (NM = unique name for Bluebeam tracking, T = author, Subj = category)
+  const flags = 4 | (props.locked ? 128 : 0); // Print + Locked
   const base = (subtype: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
     Type: PDFName.of('Annot'),
     Subtype: PDFName.of(subtype),
-    F: 4,
+    F: flags,
     C: [sr, sg, sb],
-    CA: 1,
+    CA: props.strokeOpacity ?? 1,
     ...(fillOpacity !== undefined ? { ca: fillOpacity } : {}),
     BS: bs,
     Contents: contents,
@@ -357,6 +378,7 @@ function addMarkupAnnotation(
     ...(creationDate ? { CreationDate: creationDate } : {}),
     ...(modDate ? { M: modDate } : {}),
     ...(bsiDict ? { BSIColumnData: bsiDict } : {}),
+    ...pdfRoundTrip,
     ...extra,
   });
 
@@ -382,8 +404,9 @@ function addMarkupAnnotation(
     };
     if (icColor) d.IC = icColor;
     if (cloud) {
+      const intensity = (props.cloudIntensity as number) ?? 1;
       d.IT = PDFName.of('PolygonCloud');
-      d.BE = { S: PDFName.of('C'), I: 1 };
+      d.BE = { S: PDFName.of('C'), I: intensity };
     }
     add(d);
   };
@@ -457,7 +480,7 @@ function addMarkupAnnotation(
       Rect: [cx1, cy1, cx2, cy2],
       Vertices: cloudVerts,
       IT: PDFName.of('PolygonCloud'),
-      BE: { S: PDFName.of('C'), I: 1 },
+      BE: { S: PDFName.of('C'), I: (props.cloudIntensity as number) ?? 1 },
     };
     if (icColor) cloudD.IC = icColor;
     add(cloudD); // primaryRef set here
@@ -511,7 +534,7 @@ function addMarkupAnnotation(
       Rect: [x1, y1, x2, y2],
       Vertices: verts,
       IT: PDFName.of('PolygonCloud'),
-      BE: { S: PDFName.of('C'), I: 1 },
+      BE: { S: PDFName.of('C'), I: (props.cloudIntensity as number) ?? 1 },
     };
     if (icColor) d.IC = icColor;
     add(d);
@@ -556,8 +579,12 @@ function addMarkupAnnotation(
     const [lx1, ly1] = toPdfPt(coords.x1 as number, coords.y1 as number, pw, ph);
     const [lx2, ly2] = toPdfPt(coords.x2 as number, coords.y2 as number, pw, ph);
     const arrowStyle = (props.arrowStyle as string) || 'end';
-    const leStart = (arrowStyle === 'start' || arrowStyle === 'both') ? PDFName.of('OpenArrow') : PDFName.of('None');
-    const leEnd   = (arrowStyle === 'end'   || arrowStyle === 'both') ? PDFName.of('OpenArrow') : PDFName.of('None');
+    const hasStartArrow = arrowStyle === 'start' || arrowStyle === 'both';
+    const hasEndArrow = arrowStyle === 'end' || arrowStyle === 'both';
+    const startLE = (props.lineEndStart as string) || (hasStartArrow ? 'OpenArrow' : 'None');
+    const endLE = (props.lineEndEnd as string) || (hasEndArrow ? 'OpenArrow' : 'None');
+    const leStart = PDFName.of(startLE);
+    const leEnd = PDFName.of(endLE);
     const margin = sw * 5 + 4;
     add({
       ...base('Line'),

@@ -28,5 +28,5 @@ COPY --from=frontend-builder /app/frontend/dist ./public
 # Указываем порт, который будет слушать Express
 EXPOSE 3030
 
-# Запускаем сервер
-CMD ["node", "server.js"]
+# Запускаем миграции Prisma и затем сервер
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]

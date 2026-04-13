@@ -173,7 +173,7 @@ export default function CustomRoleDialog({ open, onClose }: CustomRoleDialogProp
             />
 
             <Typography variant="subtitle2" gutterBottom>{t('roleColor')}</Typography>
-            <Box display="flex" gap={0.5} flexWrap="wrap" mb={3}>
+            <Box display="flex" gap={0.5} flexWrap="wrap" alignItems="center" mb={3}>
               {COLORS.map((c) => (
                 <Box
                   key={c}
@@ -185,6 +185,32 @@ export default function CustomRoleDialog({ open, onClose }: CustomRoleDialogProp
                   }}
                 />
               ))}
+              {/* Custom color picker */}
+              <Tooltip title={t('customColor', 'Custom color')}>
+                <Box
+                  component="label"
+                  sx={{
+                    width: 24, height: 24, borderRadius: '50%', cursor: 'pointer',
+                    border: `2px solid`,
+                    borderColor: !COLORS.includes(color) ? color : 'divider',
+                    bgcolor: !COLORS.includes(color) ? color : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    overflow: 'hidden',
+                    position: 'relative',
+                    boxShadow: !COLORS.includes(color) ? `0 0 0 2px ${color}40` : undefined,
+                  }}
+                >
+                  {COLORS.includes(color) && (
+                    <Typography sx={{ fontSize: '0.7rem', lineHeight: 1, userSelect: 'none', color: 'text.secondary' }}>+</Typography>
+                  )}
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    style={{ opacity: 0, position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}
+                  />
+                </Box>
+              </Tooltip>
             </Box>
 
             <Typography variant="subtitle2" gutterBottom>

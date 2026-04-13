@@ -24,6 +24,8 @@ import PolylineIcon from '@mui/icons-material/Polyline';
 import ImageIcon from '@mui/icons-material/Image';
 import StraightenIcon from '@mui/icons-material/Straighten';
 import RouteIcon from '@mui/icons-material/Route';
+import ElectricalServicesIcon from '@mui/icons-material/ElectricalServices';
+import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import dayjs from 'dayjs';
 import { STATUS_COLORS, STATUS_LABELS } from './MarkupListItem';
 
@@ -42,6 +44,12 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
   measure: <StraightenIcon sx={{ fontSize: 13 }} />,
   routeTemplate: <RouteIcon sx={{ fontSize: 13 }} />,
   route: <RouteIcon sx={{ fontSize: 13 }} />,
+  electricalBox: <ElectricalServicesIcon sx={{ fontSize: 13 }} />,
+  stub: <ElectricalServicesIcon sx={{ fontSize: 13 }} />,
+  panel: <ElectricalServicesIcon sx={{ fontSize: 13 }} />,
+  wireTag: <ElectricalServicesIcon sx={{ fontSize: 13 }} />,
+  reviewStamp: <PlaylistAddCheckIcon sx={{ fontSize: 13 }} />,
+  stickyNote: <span style={{ fontSize: 11 }}>📝</span>,
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -49,6 +57,10 @@ const TYPE_LABELS: Record<string, string> = {
   circle: 'Circle', cloud: 'Cloud', pen: 'Pen', highlighter: 'Highlight',
   callout: 'Callout', polyline: 'Polyline', image: 'Image', measure: 'Measure',
   routeTemplate: 'Route Template', route: 'Route',
+  electricalBox: 'Electrical Box', stub: 'Stub',
+  panel: 'Panel', wireTag: 'Wire Tag',
+  reviewStamp: 'Review Stamp',
+  stickyNote: 'Sticky Note',
 };
 
 type SortBy = 'subject' | 'author' | 'status' | 'page' | 'date';
@@ -92,14 +104,19 @@ export const MarkupTable = memo(function MarkupTable({
 
   const filtered = useMemo(() => {
     let r = baseMarkups;
-    if (filterAuthor !== 'all') r = r.filter(m => m.authorId === filterAuthor);
+    if (filterAuthor !== 'all') {
+      r = r.filter(m => {
+        if (filterAuthor.startsWith('bb:')) return m.properties?.bluebeamAuthor === filterAuthor.slice(3);
+        return m.authorId === filterAuthor;
+      });
+    }
     if (filterStatus !== 'all') r = r.filter(m => (m.properties?.status || 'none') === filterStatus);
     if (filterText) {
       const q = filterText.toLowerCase();
       r = r.filter(m =>
         (m.properties?.subject || '').toLowerCase().includes(q) ||
         (m.properties?.comment || '').toLowerCase().includes(q) ||
-        (m.author?.name || '').toLowerCase().includes(q) ||
+        (m.properties?.bluebeamAuthor || m.author?.name || '').toLowerCase().includes(q) ||
         (TYPE_LABELS[m.type] || m.type).toLowerCase().includes(q),
       );
     }
@@ -115,7 +132,7 @@ export const MarkupTable = memo(function MarkupTable({
           av = a.properties?.subject || TYPE_LABELS[a.type] || a.type;
           bv = b.properties?.subject || TYPE_LABELS[b.type] || b.type;
           break;
-        case 'author': av = a.author?.name || ''; bv = b.author?.name || ''; break;
+        case 'author': av = a.properties?.bluebeamAuthor || a.author?.name || ''; bv = b.properties?.bluebeamAuthor || b.author?.name || ''; break;
         case 'status': av = a.properties?.status || 'none'; bv = b.properties?.status || 'none'; break;
         case 'page': av = a.pageNumber ?? 0; bv = b.pageNumber ?? 0; return (av - bv) * dir;
         case 'date': av = a.createdAt || ''; bv = b.createdAt || ''; break;
@@ -130,7 +147,10 @@ export const MarkupTable = memo(function MarkupTable({
   const authors = useMemo(() => {
     const m = new Map<string, string>();
     baseMarkups.forEach(mk => {
-      if (mk.authorId) m.set(mk.authorId, mk.author?.name || mk.author?.email || 'Unknown');
+      // Use bluebeamAuthor as the display name if available
+      const displayName = mk.properties?.bluebeamAuthor || mk.author?.name || mk.author?.email || 'Unknown';
+      const key = mk.properties?.bluebeamAuthor ? `bb:${mk.properties.bluebeamAuthor}` : mk.authorId;
+      if (key) m.set(key, displayName);
     });
     return Array.from(m.entries()).map(([id, name]) => ({ id, name }));
   }, [baseMarkups]);
@@ -147,7 +167,7 @@ export const MarkupTable = memo(function MarkupTable({
     sorted.forEach(m => {
       let key: string;
       switch (groupBy) {
-        case 'author': key = m.author?.name || m.author?.email || 'Unknown'; break;
+        case 'author': key = m.properties?.bluebeamAuthor || m.author?.name || m.author?.email || 'Unknown'; break;
         case 'status': key = STATUS_LABELS[m.properties?.status || 'none'] || (m.properties?.status || 'None'); break;
         case 'page': key = `Page ${(m.pageNumber ?? 0) + 1}`; break;
         default: key = 'All';
@@ -222,7 +242,7 @@ export const MarkupTable = memo(function MarkupTable({
       TYPE_LABELS[m.type] || m.type,
       m.properties?.subject || '',
       m.properties?.comment || '',
-      m.author?.name || m.author?.email || '',
+      m.properties?.bluebeamAuthor || m.author?.name || m.author?.email || '',
       (m.pageNumber || 0) + 1,
       m.properties?.status || 'none',
       m.createdAt ? dayjs(m.createdAt).format('YYYY-MM-DD HH:mm') : '',
@@ -466,7 +486,7 @@ export const MarkupTable = memo(function MarkupTable({
                       <Box sx={{ fontSize: '0.78rem', lineHeight: 1.6 }}>
                         <div><b>Subject:</b> {subject}</div>
                         {m.properties?.comment && <div><b>Comment:</b> {m.properties.comment}</div>}
-                        <div><b>Author:</b> {m.author?.name || m.author?.email || 'Unknown'}</div>
+                        <div><b>Author:</b> {m.properties?.bluebeamAuthor || m.author?.name || m.author?.email || 'Unknown'}</div>
                         <div><b>Status:</b> {statusLabel}</div>
                         <div><b>Page:</b> {(m.pageNumber ?? 0) + 1}</div>
                         {m.createdAt && <div><b>Created:</b> {dayjs(m.createdAt).format('DD MMM YYYY HH:mm')}</div>}
@@ -505,9 +525,9 @@ export const MarkupTable = memo(function MarkupTable({
                         <Typography noWrap sx={{ fontSize: '0.83rem', lineHeight: 1.3, fontWeight: isSelected ? 600 : 400, color: isSelected ? gold : 'text.primary' }}>
                           {subject}
                         </Typography>
-                        {m.author?.name && (
+                        {(m.properties?.bluebeamAuthor || m.author?.name) && (
                           <Typography noWrap sx={{ fontSize: '0.68rem', color: 'text.secondary', lineHeight: 1.2 }}>
-                            {m.author.name}
+                            {m.properties?.bluebeamAuthor || m.author?.name}
                           </Typography>
                         )}
                       </Box>

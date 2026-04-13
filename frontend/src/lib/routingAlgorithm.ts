@@ -266,10 +266,15 @@ export function generateRoutes(
     return a.proj.t - b.proj.t;
   });
 
-  return withProj.map((ep, routeIdx) => ({
-    points: buildRoute(start, ep.point, backbone, routeIdx, spacing),
-    endpointIndex: ep.idx,
-    from: 'A',
-    to: ep.label || `B${routeIdx + 1}`,
-  }));
+  // Center routes on backbone: offset from -(n-1)/2 to +(n-1)/2
+  const count = withProj.length;
+  return withProj.map((ep, routeIdx) => {
+    const centeredIndex = routeIdx - (count - 1) / 2; // -1, 0, 1 for 3 routes
+    return {
+      points: buildRoute(start, ep.point, backbone, centeredIndex, spacing),
+      endpointIndex: ep.idx,
+      from: 'A',
+      to: ep.label || `B${routeIdx + 1}`,
+    };
+  });
 }

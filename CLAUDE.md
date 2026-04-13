@@ -1,5 +1,5 @@
 # 🗂️ REDLINES — ПОЛНАЯ ТЕХНИЧЕСКАЯ ДОКУМЕНТАЦИЯ
-> Последнее обновление: 2026-04-07 | Версия сессии: Stage 25 (batch 15)
+> Последнее обновление: 2026-04-10 | Версия сессии: Stage 30 (batch 4)
 
 ---
 
@@ -652,6 +652,677 @@ GET /compare/:docId1/:docId2/:page1/:page2/:zoom/:x/:y
 | `frontend/src/components/pdf/TileViewer.tsx` | worldToPage() |
 | `frontend/src/pages/DocumentViewPage_temp.tsx` | context menu, wizard, click modes |
 
+### Stage 27 — Collaboration Modes, Bluebeam Full Round-Trip, Performance Hardening
+
+#### Batch 1 — Performance & Stability
+
+**Клиент (Frontend):**
+- **FIX:** Fabric.js canvas cap: `renderedZoom` ограничен `8192 / (maxDim * dpr)`, floor 2.0. Предотвращает GPU crash при zoom 500%+ (было 200M пикселей → теперь max 67M)
+- **FIX:** Tile zoom level 5 (8x scale) убран — max теперь level 4 (4x). Предотвращает panic в fitz/mupdf
+- **FIX:** Cursor preview throttle 20fps в MarkupLayer (было 60fps, создавало Fabric объекты каждый кадр)
+- **FIX:** `docScale` добавлен в dependency array `syncMarkups` useEffect — polyline lengths обновляются сразу при смене scale
+- **FIX:** PdfToolbar — удалены дубликаты Select/Pan/TextSelect из Row 2 (остаток от partial edit)
+
+**Сервер (Go tile-server):**
+- **PERF:** fitz handles per PDF: 2 → 4 (4 параллельных рендера на документ)
+- **PERF:** Page cache: 120 → 400 слотов (в 3× меньше cache miss)
+- **PERF:** Render semaphore: max 16 → 32 (в 2× больше параллельных рендеров)
+- **PERF:** Cache memory.go `Get()`: write lock → RLock для чтения, write только для LRU promote
+- **FIX:** `renderer.go` — scale cap 4.0 + `recover()` для panic в fitz. Предотвращает crash tile-server при высоком DPI
+- **FIX:** `zoomLevelToScale` — убран zoom 5 (8x) и zoom 6 (16x), max scale = 4.0
+
+#### Batch 2 — Bluebeam Full Round-Trip Import/Export
+
+**Import (`importAnnotationsFromPdf.ts`):**
+- **ADD:** Все PDF annotation keys → custom properties: `/Measure` → `_pdf_Measure`, `/BE` → `borderEffect`, `/IT` → `_pdf_IT`, `/LE` → `_pdf_LE`, `/OC` → `_pdf_OC`, `/BM` → `_pdf_BM`
+- **ADD:** Locked flag (`/F` bit 7) → `locked: true`
+- **ADD:** Stroke opacity (`/CA`) → `strokeOpacity`
+- **ADD:** Rotation angle → `coordinates.angle`
+- **ADD:** Appearance stream detection → `_hasAppearanceStream`
+- **ADD:** Exact line endings: `lineEndStart`/`lineEndEnd` (ClosedArrow, Diamond, Square, Circle, Slash, Butt)
+- **ADD:** Raw subtype → `_pdf_Subtype`
+
+**Export (`exportPdfWithMarkups.ts`):**
+- **ADD:** Все custom properties → BSIColumnData (boxType, supportShape, stubDirection, stampShape, redlineLabel, etc.)
+- **ADD:** `_pdf_*` round-trip keys → native PDF keys (`/Measure`, `/BM`, `/IT`, `/OC`)
+- **ADD:** Locked flag → `/F` bit 128
+- **ADD:** Advanced line endings из `lineEndStart`/`lineEndEnd`
+- **ADD:** Stroke opacity из `strokeOpacity`
+- **ADD:** Cloud intensity из `cloudIntensity` в `/BE`
+
+#### Batch 3 — Collaboration Modes (Session / Personal / Draft)
+
+**Session Mode (LIVE) — Y.js real-time:**
+- **ADD:** Y.js Awareness API — каждый пользователь передаёт присутствие + cursor position
+- **ADD:** `useAwareness(documentId)` hook — массив подключённых пользователей с курсорами
+- **ADD:** `useSetLocalCursor(documentId)` hook — `setLocalCursor(page, x, y)` с throttle (>0.2% движения)
+- **ADD:** `getUserColor(userId)` — детерминистический цвет из 10-цветной палитры
+- **ADD:** Cursor overlay на PDF — цветные SVG стрелки с именем, smooth CSS transitions
+- **ADD:** Зелёный пульсирующий "LIVE" индикатор в тулбаре + стек аватарок (max 3 + "+N")
+
+**Personal Mode — offline-first:**
+- **ADD:** `provider.disconnect()` при входе в Personal mode
+- **ADD:** Snapshot маркапов в `personalSnapshotRef` для conflict detection
+- **ADD:** `personalMarkups` state — локальные маркапы, не синхронизируются через Y.js
+- **ADD:** localStorage persistence для personal markups
+- **ADD:** Publish: reconnect Y.js → diff с snapshot → push новых/изменённых маркапов
+- **ADD:** Discard: reconnect Y.js, сброс локальных изменений
+- **ADD:** Синий индикатор "PERSONAL (N)" с Publish/Discard кнопками
+
+**Draft Mode — улучшен:**
+- **ADD:** Интегрирован в единый mode selector (Session / Personal / Draft)
+- **ADD:** Оранжевый индикатор "DRAFT (N)" с Apply/Discard кнопками
+
+**Mode Selector UI:**
+- **Desktop:** Pill в тулбаре → Popover с тремя режимами + описаниями + чекмарк
+- **Mobile:** Compact pill в мобильном тулбаре, tap для циклического переключения mode
+- **Mobile:** Аватарки подключённых в Session, Publish/Discard кнопки в Personal/Draft
+- **ADD:** Оранжевая рамка тулбара при Draft mode, синяя при Personal mode
+- **ADD:** Валидация переходов (нельзя Personal→Draft если есть неприменённые drafts)
+
+**Ключевые файлы:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/hooks/useMarkups.ts` | Awareness API, getYjsProvider, useAwareness, useSetLocalCursor, getUserColor |
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | CollabMode state, Personal/Draft handlers, cursor tracking, mobile collab pill |
+| `frontend/src/components/pdf/PdfToolbar.tsx` | Mode selector pill + popover, avatar stack, LIVE/PERSONAL/DRAFT indicators |
+| `frontend/src/utils/importAnnotationsFromPdf.ts` | Full PDF annotation key capture, advanced line endings, locked flag |
+| `frontend/src/utils/exportPdfWithMarkups.ts` | BSI round-trip, _pdf_* restore, locked/opacity/intensity |
+| `frontend/src/components/pdf/MarkupOverlay.tsx` | renderedZoom cap 8192px |
+| `frontend/src/components/pdf/MarkupLayer.tsx` | Cursor preview throttle, docScale dep fix |
+| `frontend/src/components/pdf/TileViewer.tsx` | Zoom level 5 removed, getScaleForLevel max 4x |
+| `tile-server/internal/renderer/renderer.go` | Scale cap 4.0, recover() for panic |
+| `tile-server/internal/pool/pool.go` | fitzHandleCount 2→4 |
+| `tile-server/internal/cache/memory.go` | RLock optimization |
+| `tile-server/internal/handler/http.go` | Render semaphore 16→32 |
+
+### Stage 28 — Cloud/Callout/Measure Rework, Tool Chest, Auto-detect Changes, Permissions, UX Polish
+
+#### Batch 1 — Cloud + Callout полный рeворк
+
+**Cloud:**
+- **ADD:** `cloudArcSize` property — слайдер 8-60px в Properties Panel (было хардкод 20)
+- **ADD:** Rotation support — `coords.angle` применяется к cloud Path
+- **ADD:** `cloudArcSize` в propHash для авто-ресинка
+
+**Callout (Cloud + выноска):**
+- **ADD:** Отдельный стиль connector line: `connectorStroke`, `connectorWidth`, `connectorStyle`
+- **ADD:** Font Family dropdown: Arial, Helvetica, Times New Roman, Courier New, Georgia, Verdana
+- **ADD:** Bold/Italic toggle, Text Align (Left/Center/Right)
+- **ADD:** Textbox Border — отдельный color picker (`textBoxStroke`)
+- **FIX:** Текст пропадал при снятии фокуса — `text:editing:exited` использовал `getBoundingRect` (корежил координаты). Теперь берёт `existingCloud` из markupsRef
+- **FIX:** Перетаскивание cloud не двигало textbox — textbox/bg/connector теперь двигаются при drag cloud в ActiveSelection
+- **FIX:** Фокус перескакивал с textbox на cloud после resize — selection restore теперь проверяет `prevActivePart === 'textbox'`
+- **FIX:** Textbox не масштабировал текст при resize — fontSize пересчитывается пропорционально `avgScale`
+- **ADD:** Live text sync — `text:changed` debounced 300ms сохраняет текст + textBox height в Y.js на лету
+
+**Properties Panel для callout/cloud:**
+- Arc Size slider (cloud)
+- Font Family, Bold, Italic, Text Align (callout)
+- Textbox Border color (callout)
+- Connector Style dropdown (callout)
+
+#### Batch 2 — Measure/Dimension полный рeворк Bluebeam-style
+
+- **ADD:** Label Font Size — слайдер 8-36px (было хардкод 14)
+- **ADD:** Label Text Color — отдельный color picker
+- **ADD:** Label Background — настраиваемый `labelBg`
+- **ADD:** Label Font Family, Font Weight
+- **ADD:** Tick Size — слайдер 3-20px (было хардкод 6)
+- **ADD:** Extension Lines — 0-15px (тонкие линии за тиками, как в Bluebeam)
+- **ADD:** Scale-adaptive label — перемещается НАД линией когда измерение короткое
+- **ADD:** Все новые свойства в propHash
+
+#### Batch 3 — Draft Mode полная изоляция
+
+- **REWRITE:** При входе в Draft — snapshot ВСЕХ маркапов в `draftMarkups`
+- **ADD:** Все операции в draft (add/modify/delete/properties) работают ТОЛЬКО локально
+- **ADD:** Apply: diff snapshot vs current → push new/modified/deleted в Y.js
+- **ADD:** Discard / выход из draft → revert к snapshot, Y.js не тронут
+- **ADD:** `_fullProperties` / `_replaceProperties` для полной замены properties (удаление custom params)
+- **FIX:** `handleUpdateProperties` теперь работает в draft и personal mode
+
+#### Batch 4 — Custom Parameters per-markup
+
+- **REWRITE:** "Add Parameter" создаёт property только для выделенного маркапа (было project-wide)
+- **ADD:** Checkbox "Apply to all markups" — опционально для всех
+- **ADD:** Валидация уникальных имён — дубликаты блокируются с ошибкой
+- **ADD:** Кнопка ✕ для удаления per-markup параметров
+- **ADD:** Per-markup параметры отображаются отдельно от project-level fields
+- **FIX:** Удаление параметра через `_replaceProperties` (полная замена, не merge)
+
+#### Batch 5 — Tool Chest (Bluebeam Tool Chest)
+
+- **ADD:** Per-user presets — каждый пользователь видит только свои (было company-wide)
+- **ADD:** 22 сохраняемых свойства (было 7): + fontFamily, fontWeight, fontStyle, textAlign, arrowSize, arrowStyle, cloudArcSize, textBoxFill, textBoxStroke, connectorStyle, tickSize, extensionSize, stampShape, stampFill, subject, status
+- **ADD:** Сохранение типа маркапа (`markupType`) вместе с preset
+- **ADD:** Кнопка "Tool Chest" в тулбаре — pill с иконкой Construction + текстом
+- **ADD:** Popover с сеткой 2 колонки: иконка типа + название + sublabel + color dot
+- **ADD:** Properties Panel — полный редизайн секции "My Tool Chest":
+  - Интерактивная карточка "Save as preset" с preview (цвет, толщина, стиль, тип)
+  - Вертикальный список карточек: иконка 32px + название + мета + swatches + delete
+  - Empty state с подсказкой
+- **ADD:** Mobile Tool Chest — bottom sheet с сеткой пресетов
+- **FIX:** Backend: DELETE только своих пресетов (или admin)
+
+#### Batch 6 — Auto-detect Changes + Compare Draft + Permissions + UX
+
+**Auto-detect Changes:**
+- **ADD:** Go endpoint `GET /compare/detect/:doc1/:doc2/:page1/:page2` — рендерит обе страницы, 16×16 grid, pixel diff (threshold 30, ratio 8%), flood fill, normalized bounding boxes
+- **ADD:** Кнопка AutoFixHigh в CompareToolbar (desktop + mobile)
+- **ADD:** Frontend handler: итерирует все страницы, создаёт красные REVISION CLOUD маркапы в draft mode
+- **ADD:** Compare автоматически входит в Draft mode (изоляция маркапов)
+- **ADD:** При выходе из compare — toast напоминает о draft маркапах
+
+**Bluebeam Auto-import:**
+- **ADD:** Автоимпорт аннотаций при первом открытии PDF (markups.length === 0)
+- **FIX:** Import badge скрыт если маркапы уже существуют (были импортированы ранее)
+- **FIX:** `bluebeamAuthor` приоритетен во всех UI: MarkupTable, MarkupListItem, Properties Panel, CSV export, sort, filter, search
+
+**OneDrive:**
+- **FIX:** Auto-retry при 401 на download (force token refresh + retry)
+- **FIX:** Auto-retry при 401 на getDelta (sync)
+- **FIX:** SyncService сбрасывает cached token при ошибке auth
+
+**Permissions:**
+- **ADD:** `canDownload` check — кнопки Download/Export скрыты если нет прав
+- **ADD:** Mobile download button скрыт без прав
+- **ADD:** Compare Export/Save скрыты без прав
+
+**UX Polish:**
+- **FIX:** Highlight opacity 0.5 → 0.3 (лучше видно текст)
+- **FIX:** Search controls — вертикальный stack вместо горизонтального ряда
+- **FIX:** Ctrl+V вставляет маркапы к позиции курсора (не nudge +2%)
+- **FIX:** Callout textbox + cloud/textbox перетаскиваются вместе при ActiveSelection
+- **FIX:** zIndex убран из propHash — Bring to Front/Send to Back мгновенное без flicker
+- **FIX:** Compare slider шире (flex:1), убран лишний разделитель
+- **FIX:** Version number reset при delete+re-upload (фильтр `isDeleted: false`)
+
+**Ключевые файлы:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/components/pdf/MarkupLayer.tsx` | Cloud/callout/measure rework, live text sync, ActiveSelection drag |
+| `frontend/src/components/pdf/MarkupPropertiesPanel.tsx` | Tool Chest UI, custom params per-markup, cloud/callout/measure controls |
+| `frontend/src/components/pdf/PdfToolbar.tsx` | Tool Chest button+popover, permissions, compare controls |
+| `frontend/src/components/pdf/MarkupTable.tsx` | bluebeamAuthor priority everywhere |
+| `frontend/src/components/pdf/MarkupListItem.tsx` | bluebeamAuthor display |
+| `frontend/src/components/pdf/CompareToolbar.tsx` | Auto-detect button, wider slider |
+| `frontend/src/components/pdf/PdfSidebar.tsx` | Search controls vertical layout |
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | Draft full isolation, paste-at-cursor, auto-import, permissions, mobile Tool Chest |
+| `frontend/src/hooks/useMarkups.ts` | `_replaceProperties` for full property replacement |
+| `frontend/src/utils/importAnnotationsFromPdf.ts` | All PDF annotation keys capture |
+| `frontend/src/utils/exportPdfWithMarkups.ts` | BSI round-trip, locked flag, line endings |
+| `backend/src/controllers/PresetController.js` | Per-user presets, own-only delete |
+| `backend/src/controllers/DocumentController.js` | Version reset on re-upload |
+| `backend/src/services/storage/OneDriveProvider.js` | Auto-retry 401 on download/getDelta |
+| `backend/src/services/OneDriveSyncService.js` | Clear token on auth error |
+| `tile-server/internal/handler/compare.go` | DetectChanges endpoint (16x16 grid diff) |
+| `tile-server/main.go` | /compare/detect route |
+
+---
+
+#### Batch 7 — Markup Grouping (Ctrl+G / Ctrl+Shift+G)
+
+- **ADD:** `Ctrl+G` — группировка 2+ выделенных маркапов (общий `groupId` в properties)
+- **ADD:** `Ctrl+Shift+G` — разгруппировка (удаление groupId через `_replaceProperties`)
+- **ADD:** Auto-select group members — клик на маркап в группе выделяет ВСЕ члены
+- **ADD:** Group/Ungroup пункты в контекстном меню (ПКМ)
+
+#### Batch 8 — Custom Stamps (кастомные маркапы из выделения)
+
+- **ADD:** ПКМ → "Save as Custom Stamp" — сохраняет 1+ маркапов как составной штамп
+- **ADD:** Хранит относительные позиции (`_offsetX/_offsetY`), типы, стили всех маркапов
+- **ADD:** MUI Dialog для ввода имени (вместо browser `prompt()`)
+- **ADD:** При размещении: все маркапы создаются с точными относительными позициями + общий `groupId`
+- **ADD:** Cursor preview — реальные фигуры из штампа следуют за мышью (cloud→Path, rect→Rect, line→Line)
+- **ADD:** Кастомные иконки в Tool Chest: 1-2 буквы инициалов + детерминистический цвет из 12-цветной палитры
+- **ADD:** Кнопка удаления ✕ в Tool Chest popover + мгновенное обновление списка
+- **ADD:** Mobile: "Save Current" кнопка в Tool Chest bottom sheet
+- **FIX:** Query invalidation key `['markupPresets']` (было `['presets']`)
+- **REWRITE:** Tool Chest popover — стиль идентичен Review Stamps (золотой header, список без border, hover подсветка)
+
+#### Batch 9 — Permissions & Security Hardening
+
+- **FIX:** Lock/Unlock — проверка owner/admin/allowedEditUserIds (было: любой мог лочить чужие)
+- **FIX:** Bring to Front/Back — проверка прав + blocked для locked маркапов
+- **FIX:** `handleUpdateProperties` — серверная проверка allowedEditUserIds + locked с debounced toast
+- **FIX:** Locked маркапы полностью исключаются из box-select (`stripLockedFromSelection` rewrite: discard + re-create selection)
+- **FIX:** Delete с feedback: "Deleted 3, skipped 2 locked/protected" или "Cannot delete — N markup(s) are locked"
+- **FIX:** ПКМ на ActiveSelection (multi-select) — теперь работает (проверка `target.type === 'activeSelection'`)
+- **ADD:** `canDownload` check — Download/Export кнопки скрыты без прав (desktop + mobile + compare)
+
+#### Batch 10 — Compare Toolbar Clean UI
+
+- **REWRITE:** CompareToolbar — минимальный набор: `[Old] [New] ━━●━━ 50% ✨ ✕`
+- Убрано: label "COMPARE", Download, Save кнопки
+- **ADD:** `onDetectChanges` + `isDetecting` props, spinner во время detection
+- **ADD:** Slider 180px шириной
+- **ADD:** Процент рядом со slider (mobile + desktop)
+
+#### Batch 11 — Tile Quality: Zoom Level 5 (8x) + Lossless WebP
+
+**Клиент (TileViewer):**
+- **ADD:** Zoom level 5 (8x) для zoom >500% — smart client-side check: `(maxW*4)*(maxH*4) < 60M` pixels
+- **ADD:** Max 16 тайлов за sync cycle для zoom 5 (не бомбит сервер)
+- **ADD:** Zero buffer для zoom 5 — только строго видимые тайлы
+- **FIX:** Loading overlay скрывается только при загрузке тайла текущего zoom level (не zoom-0 thumbnail)
+
+**Сервер (Go renderer):**
+- **ADD:** Smart DPI cap: 8x разрешено для страниц <60M pixels (A4 ✅, A3 ⚠️ fallback 4x, A1 ⚠️ fallback 4x)
+- **ADD:** WebP quality 100% (lossless) для zoom 3+ (было 98%)
+- **ADD:** Quality 88% для thumbnails (было 85%), 94% для zoom 1 (было 92%)
+
+#### Batch 12 — UX Polish: 7 HIGH severity fixes
+
+- **FIX:** Draft→Personal с pending drafts: `toast.error` 3 секунды (было: обычный toast 2сек)
+- **FIX:** Publish personal markups: счётчик failed + `toast.error` при частичном провале
+- **FIX:** Draft→Session с изменениями: `window.confirm` перед discard (было: без подтверждения)
+- **FIX:** Permission check: `toast.error('No permission to edit')` с debounce 2сек (было: silent return)
+- **FIX:** Undo/Redo ошибки: `toast.error('Undo/Redo failed')` (было: только console.error)
+- **FIX:** Sidebar Layers tab: "No markup layers" empty state
+- **FIX:** Custom params per-markup: `_fullProperties` + `_replaceProperties` для полной замены properties
+
+**Ключевые файлы batch 7-12:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | Grouping, Custom Stamps, permissions, confirm dialogs, error feedback |
+| `frontend/src/components/pdf/PdfToolbar.tsx` | Tool Chest popover restyle, onDeletePreset, icons |
+| `frontend/src/components/pdf/MarkupLayer.tsx` | stripLockedFromSelection rewrite, ПКМ на ActiveSelection, bounds clamp, textEditingMarkupId |
+| `frontend/src/components/pdf/MarkupPropertiesPanel.tsx` | Custom params per-markup, _fullProperties |
+| `frontend/src/components/pdf/CompareToolbar.tsx` | Minimal UI rewrite: Old+New+slider+%+detect+close |
+| `frontend/src/components/pdf/PdfSidebar.tsx` | Empty states for tabs |
+| `frontend/src/hooks/useMarkups.ts` | _replaceProperties for full property replacement |
+| `frontend/src/hooks/useMarkupPresets.ts` | markupType field |
+| `backend/src/controllers/PresetController.js` | Per-user presets, own-only delete |
+| `tile-server/internal/renderer/renderer.go` | Smart 8x cap, lossless WebP quality |
+
+### Stage 29 — QA/QC Review System, Spell Check, User Settings, Tile Quality, Speed
+
+#### Batch 1 — User Settings Dialog
+- **ADD:** `useUserSettings` hook — localStorage per-user, cross-component sync via CustomEvent
+- **ADD:** UserSettingsDialog — 5 sections: Markup Defaults (color+recent, width, lineStyle, fontSize, subject, status, units), Permissions (edit/delete), Behavior (autoSelect, confirmDelete, snapToGrid, showLength), Interface (theme), Collaboration (cursors, autoImport)
+- **ADD:** Settings button in AppHeader user menu + Logout icon
+- **ADD:** All new markup creation uses `userSettings.allowOthersEdit/Delete`
+- **ADD:** Mobile: fullScreen dialog
+- **FIX:** Settings apply instantly via CustomEvent dispatch
+
+#### Batch 2 — QA/QC Spell Check
+- **ADD:** Typo.js integration — en_US dictionary (550KB), lazy loaded
+- **ADD:** SpellCheckPanel → errors list with suggestions, fix/ignore, context, jump to markup
+- **ADD:** 40+ construction terms whitelist (hvac, rebar, conduit, etc.)
+- **ADD:** QA/QC as 4th collaboration mode (Session/Personal/Draft/QA/QC) — розовый #e91e63
+- **ADD:** ReviewPanel with 2 tabs: Spell Check + Checklist
+- **FIX:** Properties panel auto-closes in QA/QC mode (no overlap)
+- **FIX:** Removed standalone spell check buttons (desktop + mobile)
+
+#### Batch 3 — QA/QC Checklist Review System
+
+**Backend (Prisma + API):**
+- **ADD:** 3 models: `ChecklistTemplate`, `ReviewSession`, `ReviewItem`
+- **ADD:** 9 API endpoints: template CRUD, review lifecycle, item update, fix marking
+- **ADD:** Relations to Company, User, Document models
+
+**Frontend (ReviewPanel):**
+- **ADD:** Template selection (3 defaults + custom template creation)
+- **ADD:** Active review: progress bar, grouped items, pass/fail/skip buttons
+- **ADD:** Fail items: expandable comment + pin placement on drawing
+- **ADD:** Complete review: summary + assign responsible person
+- **ADD:** Review Reports list — ALL completed reviews visible to everyone
+- **ADD:** "View →" opens full report, "←" returns to list
+- **ADD:** "Mark as Fixed" on fail items for responsible person
+- **ADD:** Previous Version Reviews — re-inspection overlay on new revision
+
+#### Batch 4 — Tile Quality & Rendering
+- **ADD:** `imageSmoothingEnabled` smart toggle: OFF for HD tiles (pixel-perfect), ON for fallback thumbnails
+- **ADD:** DPR-aware zoom levels: `effectiveZoom = zoom × screenDpr`, upscale ratio ≤ 1.3
+- **ADD:** VectorSharpenOverlay — pdfjs renders visible page at exact DPR after 350ms settle
+- **ADD:** WebP quality 100% (lossless) for zoom 3+ (was 98%)
+- **ADD:** Zoom level 5 (8x) for small/medium pages (<60M pixels)
+
+#### Batch 5 — Speed & Init Optimization
+- **ADD:** DocInfo cached in sessionStorage — instant display on repeat visits
+- **ADD:** PDF file kept on disk after eviction (skip re-download)
+- **ADD:** Lazy fitz handles: 1 instant + 3 background (non-blocking prepare)
+- **ADD:** Idle eviction 5 min → 15 min
+- **ADD:** Status polling 500ms → 250ms
+- **ADD:** Loading overlay only hides on current-zoom-level tile
+- **FIX:** Live cursors: fixed broken `scrollContainerRef` → `document.addEventListener`
+- **FIX:** Cursor style: Miro-style arrow + name pill + smooth transitions
+
+**Misc fixes:**
+- **FIX:** React hooks order: `useState`/`useMemo` moved before early returns in ReviewPanel
+- **FIX:** QA/QC color missing in popover `colors` record → crash
+- **FIX:** `projectUsers.map` without null check → crash
+- **FIX:** Properties toggle: floating button → toolbar button (desktop + mobile), two-state icon (normal/crossed)
+- **FIX:** All API URLs in ReviewPanel corrected to match backend routes
+
+**Ключевые файлы Stage 29:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/hooks/useUserSettings.ts` | Per-user settings hook with cross-component sync |
+| `frontend/src/components/users/UserSettingsDialog.tsx` | Full settings dialog (5 sections, mobile adaptive) |
+| `frontend/src/components/layout/AppHeader.tsx` | Settings + Logout icon in user menu |
+| `frontend/src/lib/spellCheck.ts` | Typo.js spell checker with construction terms |
+| `frontend/src/components/pdf/ReviewPanel.tsx` | QA/QC panel: Spell Check + Checklist + Reports |
+| `frontend/src/components/pdf/VectorSharpenOverlay.tsx` | pdfjs vector sharpening at exact DPR |
+| `frontend/src/components/pdf/TileViewer.tsx` | DPR-aware zoom, smart smoothing, DocInfo cache, speed |
+| `frontend/src/components/pdf/MarkupOverlay.tsx` | renderedZoom debounce sync 120ms |
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | QA/QC mode, cursor fix, properties toggle, settings integration |
+| `backend/prisma/schema.prisma` | ChecklistTemplate, ReviewSession, ReviewItem models |
+| `backend/src/controllers/ReviewController.js` | 9 QA/QC API endpoints |
+| `backend/src/routes/reviewRoutes.js` | Review routes |
+| `tile-server/internal/renderer/renderer.go` | Lossless WebP, smart 8x cap |
+| `tile-server/internal/pool/pool.go` | Disk cache, lazy handles, 15min eviction |
+
+### Stage 30 — Mode System Rewrite (Personal/Edit/Live), Performance, Pulsation, Wheel, Settings
+
+#### Batch 1 — Collaboration Mode System Rewrite
+
+**Полная переработка режимов коллаборации:**
+
+| Старое | Новое | Семантика |
+|--------|-------|-----------|
+| Session | **Live** | Y.js real-time, видны только session markups, зелёный #4caf50 |
+| Personal | **Personal** (default) | Создание новых маркапов локально, чужие не трогаешь, синий #2196f3 |
+| Draft | *(hidden)* | Скрыт из UI, но код остался |
+| QA/QC | *(hidden)* | Скрыт из UI, доступен программно |
+| — | **Edit** | Эксклюзивная блокировка через awareness, оранжевый #ff9800 |
+
+**CollabMode type:** `'personal' | 'live' | 'edit' | 'draft' | 'qaqc'`
+
+**Personal Mode (default):**
+- Можно создавать маркапы — они сохраняются в localStorage
+- Нельзя редактировать/удалять чужие маркапы (серверные)
+- `visibleMarkups = [...markups, ...personalMarkups]`
+- Publish: push personal markups в Y.js → сервер
+- Discard: очистить localStorage, восстановить оригинальные маркапы
+- Publish/Discard кнопки показываются только когда localStorage содержит данные
+- localStorage сохраняет только при реальном add/modify/delete (не при входе в режим)
+
+**Edit Mode:**
+- Эксклюзивная блокировка через Y.js Awareness API (только один пользователь)
+- Полный контроль: edit/delete/lock/z-order, но respects `allowedEditUserIds`
+- `canEditMarkup` проверяет permissions, не возвращает true безусловно
+- Publish/Discard аналогично Personal
+- При попытке войти когда другой пользователь в Edit → toast с именем блокирующего
+
+**Live Mode:**
+- Y.js real-time синхронизация
+- `liveSessionMarkupIds` ref отслеживает маркапы созданные в текущей сессии
+- Можно редактировать только свои session-маркапы
+- Зелёный пульсирующий "LIVE" индикатор + стек аватаров
+
+**Mode Selector UI:**
+- Desktop: Pill в тулбаре → Popover: Personal → Edit → Live (порядок)
+- Mobile: Compact pill, tap для циклического переключения
+- QA/QC и Draft скрыты из popover, но доступны через код
+
+#### Batch 2 — Mode Logic Implementation
+
+- **ADD:** `handleCollabModeChange` — управляет Y.js awareness edit lock, transitions, auto-publish
+- **ADD:** `canMarkup`: true в personal/live/edit, false только без permission
+- **ADD:** `canEditMarkup`: personal/live = only session markups, edit = respects allowedEditUserIds
+- **ADD:** `liveSessionMarkupIds` ref для Live mode
+- **ADD:** `handleMarkupSelected`: toast "Switch to Edit mode" при клике на non-editable markup
+- **ADD:** Auto-publish personal markups при переключении в Live
+- **FIX:** Personal mode Y.js — check localStorage FIRST, reconnect only if NOT restoring personal
+- **FIX:** Draft→Personal с pending drafts: 3-sec error toast
+- **FIX:** Permission check debounced toast "No permission to edit"
+- **FIX:** canEditMarkup в Edit mode — теперь respects allowedEditUserIds (раньше безусловно true)
+
+#### Batch 3 — User Settings Enhancements
+
+- **ADD:** Pulse Review Markups — toggle + color picker + intensity (Low/Med/High) в UserSettingsDialog
+- **ADD:** Quick Wheel editor — Dota-style visual: 4 группы (Standard/Review/Electrical/Tool Chest), search, max 15 slots
+- **ADD:** 6-я секция "Collaboration" в Settings: showCursors, autoImportAnnotations
+- **FIX:** Color picker — единый picker box вместо множественных popups от recent swatches
+- **FIX:** `confirmOnDelete` — реальная проверка перед удалением маркапа
+- **FIX:** `snapToGrid` — работает в object:moving handler MarkupLayer
+- **FIX:** Settings apply мгновенно через CustomEvent('userSettingsChanged')
+- **FIX:** Markup defaults (color, width, lineStyle, fontSize, subject, status) применяются при создании
+
+#### Batch 4 — Performance Optimizations (1000+ markups)
+
+**Incremental Y.js sync:**
+- `yMap.observe()` — fires `scheduleUpdate` только когда ключи реально изменились
+- Adaptive throttle: 200+ markups → 100ms, иначе RAF (16ms)
+
+**Fabric.js optimizations (MarkupLayer):**
+- `objectCaching: true` на всех объектах → GPU-ускоренное кэширование
+- `statefullCache: false` → skip deep equality check
+- `skipOffscreen: true` → не рендерит объекты вне viewport
+- `obj.dirty = true` при scale change → корректная инвалидация
+
+**propHash fast-path:**
+- `tsCache` хранит `updatedAt` timestamp
+- Если updatedAt не изменился → skip полный hash (O(1) вместо O(n props))
+
+**Cursor preview optimization:**
+- Fast-path move: no remove/recreate, just update position
+- `objectCaching: false` на preview Group → мгновенный рендер
+- `textEditingMarkupId` ref предотвращает syncMarkups от пересоздания callout при текстовом редактировании
+
+**Markup pulsation (SVG shape-adaptive):**
+- SVG `feGaussianBlur` filter для shape-adaptive glow
+- Shape detection: `stampShape` → `m.type` → path generation
+- Shapes: circle, triangle, diamond, hexagon, star, cloud, rounded, rectangle
+- Configurable: `pulseColor`, `pulseIntensity` (low=2px, medium=4px, high=6px blur)
+
+**Markup Wheel (MarkupWheel.tsx):**
+- Radial menu: radius 140px, items 56px
+- SVG ring с segment highlight + center circle
+- Blocks all background events (stopPropagation)
+- Open: Q key / Middle-click (capture phase) / Double-tap (mobile)
+- Close: Escape / Q key
+- Configurable slots (max 15) через UserSettingsDialog
+
+**Download dropdown:**
+- Единая кнопка Download → Menu: "Download Clean" / "Download with Markups"
+- Вместо двух отдельных кнопок
+
+**VectorSharpenOverlay:**
+- pdfjs renders most visible page at zoom×DPR
+- 350ms settle delay, 40M pixel safety cap
+- Positioned at exact screen coordinates matching tile layer
+- Fade in with opacity transition 0.2s
+
+**Spell check rewrite:**
+- `checkPdfText()` scans PDF text via pdfjs getTextContent (was: checkMarkups on markup properties)
+- 40+ construction terms whitelist
+
+**Ключевые файлы Stage 30:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | Mode system rewrite, mode logic, wheel, pulse, VectorSharpen, download dropdown |
+| `frontend/src/components/pdf/PdfToolbar.tsx` | Mode selector popover (Personal→Edit→Live), download menu, Tool Chest, properties toggle |
+| `frontend/src/components/pdf/MarkupLayer.tsx` | objectCaching, skipOffscreen, propHash fast-path, snap to grid, cursor preview, textEditingMarkupId |
+| `frontend/src/components/pdf/MarkupOverlay.tsx` | SVG shape-adaptive pulsation, renderedZoom debounce |
+| `frontend/src/components/pdf/MarkupWheel.tsx` | Radial menu component (Dota-style) |
+| `frontend/src/components/pdf/VectorSharpenOverlay.tsx` | pdfjs vector sharpening overlay |
+| `frontend/src/components/pdf/ReviewPanel.tsx` | Spell check on PDF text, checklist, reports (3 tab icons) |
+| `frontend/src/components/users/UserSettingsDialog.tsx` | 6 sections, Quick Wheel editor, pulse config |
+| `frontend/src/hooks/useUserSettings.ts` | 20+ settings, localStorage per-user, CustomEvent sync |
+| `frontend/src/hooks/useMarkups.ts` | Incremental Y.js observe, adaptive throttle, awareness API |
+| `frontend/src/lib/spellCheck.ts` | checkPdfText (was checkMarkups) |
+| `backend/src/controllers/ReviewController.js` | 9 QA/QC endpoints, role-based access |
+
+#### Batch 5 — Session Identity & Markup Ownership
+
+- **ADD:** `sessionId` — unique UUID stamped into every markup's `properties.sessionId` at creation
+- **ADD:** `activeSessionId` prop → MarkupLayer uses `m.properties?.sessionId !== activeSessionId` for session restriction
+- **ADD:** SessionId persisted in `localStorage[session-id-{docId}]` — survives page reload
+- **ADD:** SessionId restored ONLY when personal markups exist (Live mode markups become locked after reload)
+- **ADD:** SessionId rotated (`crypto.randomUUID()`) after every Publish — published markups become server-owned
+- **FIX:** `canEditMarkup` now uses `sessionId` check instead of `personalMarkups.some(id)`
+- **FIX:** `handleMarkupModifiedDraft` ownership check moved inside `setPersonalMarkups(prev => ...)` updater (fixes stale closure)
+- **FIX:** `handleMarkupModifiedDraft` Live mode verifies `mk.properties?.sessionId !== sessionId`
+- **FIX:** `handleDeleteMarkupDraft` Live mode filters by sessionId before delete
+- **FIX:** Group expansion in `handleMarkupSelected` searches `[...markups, ...personalMarkups]`
+- **REMOVE:** `editableMarkupIds` Set → replaced entirely by `activeSessionId` string comparison
+
+#### Batch 6 — Edit Mode Persistence & Lock TTL
+
+- **ADD:** Edit mode drafts saved to `localStorage[edit-drafts-{docId}]` + `edit-snapshot-{docId}` + `edit-userId-{docId}`
+- **ADD:** Only saved when there are REAL changes (new/modified/deleted vs snapshot) — empty edit sessions don't persist
+- **ADD:** Restore on page load: checks edit-userId matches, re-acquires edit lock via Awareness
+- **ADD:** If another user holds lock → stale data cleaned, toast "Another user is editing"
+- **ADD:** Lock heartbeat: `editLockTime: Date.now()` updated every 60s via Awareness
+- **ADD:** Lock TTL: 5 minutes — all lock checks ignore locks older than TTL
+- **ADD:** `clearEditStorage()` helper called on Apply/Discard/mode exit
+- **ADD:** `personalMarkupsRef` + `draftMarkupsRef` — always-fresh refs for publish callbacks (avoids stale closure)
+
+#### Batch 7 — Markup Stability & Anti-Jitter
+
+- **FIX:** `object:moving` no longer calls `onMarkupModified` — only visual canvas update during drag
+  - Prevents mid-drag state updates → hash mismatch → object removal → flash
+  - Final position saved only in `object:modified` (mouseup)
+  - Callout parts (connector, bg) still sync visually during drag
+- **FIX:** `_locallyModified` flag on Fabric objects — sync accepts position without recreation
+- **FIX:** `dataHash()` without `w/h` — hash stable across zoom, only changes on real data change
+- **FIX:** `repositionFromCoords()` — absolute reposition for simple shapes (rect, circle, text, image)
+- **FIX:** Group-based types (stamp, polyline, measure, callout) → forced recreation on dimension change
+- **FIX:** `lastSyncDimsRef` — reposition only when canvas dimensions actually changed
+- **FIX:** `object:modified` for reviewStamp/electricalBox — fallback to absolute coords when `markupsRef` doesn't have the markup yet (newly created)
+- **FIX:** Delete confirmation → MUI Dialog (was `window.confirm`)
+- **FIX:** Discard confirmation → MUI Dialog, one-click (was double-click bug)
+- **FIX:** MarkupWheel blocks ALL pointer events via window capture-phase listeners
+
+#### Batch 8 — Search, Download, Favorites Stamps
+
+**Search refactor:**
+- **ADD:** 3 search modes: Contains (default, substring), Exact (word boundary `\b`), Fuzzy (tolerates separators)
+- **ADD:** Mode selector pills in PdfSidebar (Contains/Exact/Fuzzy)
+- **FIX:** Search highlight Y-coordinate: uses `tx[3]` (font scale from transform) instead of `bestItem.transform[0]` (X scale)
+- **FIX:** Highlight padding ±1px for better visual coverage
+
+**Desktop Download dropdown:**
+- **RESTYLE:** `Menu` → styled `Popover` with gold header, icon cards, descriptions
+- Two options: "Clean PDF" (green icon) + "With Markups" (gold icon, spinner during export)
+- Matching style with stamp popover (border-radius 12px, shadows, hover effects)
+
+**Favorites Review Stamps (10 new):**
+- OVERLAP (⊗ OVR, diamond filled red), FONT (Aa, circle outline indigo), WRONG (✗, circle filled red)
+- INFO (i, circle filled blue), MISSED (⚠, triangle filled orange), OTHER (•••, rounded outline grey)
+- DIM (↔ DIM, rounded filled orange), TAG (# TAG, rounded outline purple)
+- ALIGN (⫶ ALN, rounded outline teal), CALL ME (☎ CALL, rounded filled blue)
+- Added to: desktop popover, mobile bottom sheet, UserSettingsDialog wheel editor
+- Category "Favorites" shown first in all lists
+
+**Pulsation restyle:**
+- SVG filter → simple CSS border + boxShadow (works at any zoom)
+- Expand compensates for `strokeWidth`
+- Screen-constant size via `screenPx / cssScale`
+
+**Ключевые файлы Batch 5-8:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | sessionId system, edit persistence, lock TTL, search modes, refs |
+| `frontend/src/components/pdf/MarkupLayer.tsx` | activeSessionId, dataHash, repositionFromCoords, object:moving cleanup, _locallyModified |
+| `frontend/src/components/pdf/MarkupOverlay.tsx` | Pulse CSS restyle, lock badge (removed) |
+| `frontend/src/components/pdf/PdfToolbar.tsx` | Download Popover, Favorites stamps, hasEditChanges |
+| `frontend/src/components/pdf/PdfSidebar.tsx` | Search mode selector (Contains/Exact/Fuzzy) |
+| `frontend/src/components/pdf/MarkupWheel.tsx` | Capture-phase event blocking |
+| `frontend/src/components/users/UserSettingsDialog.tsx` | Favorites stamps in wheel editor |
+
+### Stage 31 — Fabric.js Group→Path Migration, Bug Fixes, UX
+
+#### Batch 1 — Fabric.js v5 Group Positioning Bug Fix (CRITICAL)
+
+**Корневая проблема:** `fabric.Group` в Fabric.js v5 при пересоздании через `syncMarkups` (remove + canvas.add) появляется в неправильной визуальной позиции. Координаты сохраняются корректно, но визуально маркап улетает в левый верхний угол. При перезагрузке страницы всё корректно.
+
+**Решение: миграция Group → одиночные объекты (Path/Rect/Circle)**
+
+| Тип | Было | Стало |
+|-----|------|-------|
+| Arrow | `fabric.Group([Line, Triangle])` | `fabric.Path` (SVG line + arrowhead) |
+| Polyline/Route | `fabric.Group([Lines, Label])` | `fabric.Path` + `auxLabelCache` Text |
+| Measure | `fabric.Group([Line, Label, Ticks])` | `fabric.Path` (line+ticks) + `auxLabelCache` Text |
+| ReviewStamp | `fabric.Group([Shape, Text])` | `fabric.Rect` + `auxLabelCache` Text |
+| ElectricalBox | `fabric.Group([Rect, Circles, Text])` | `fabric.Rect` + `auxLabelCache` Text |
+| Stub | `fabric.Group([Circle, Text])` | `fabric.Circle` + `auxLabelCache` Text |
+| Panel | `fabric.Group([Rects, Text])` | `fabric.Rect` + `auxLabelCache` Text |
+| WireTag | `fabric.Group([Lines, Text])` | `fabric.Path` + `auxLabelCache` Text |
+
+**Новая архитектура:**
+- `auxLabelCache` — `useRef<Map<string, fabric.Object>>` для хранения текстовых лейблов
+- Лейблы `selectable: false, evented: false` — не мешают взаимодействию с основным объектом
+- После каждого `syncMarkups` — `canvas.bringToFront()` для всех auxLabels (текст всегда поверх заливки)
+- `preserveObjectStacking: true` на canvas — объекты не меняют z-order при выделении
+
+**object:modified для Arrow (Path):**
+- Чистое перемещение: `_lastLeft/_lastTop` delta (как Cloud)
+- Поворот/масштабирование: `calcTransformMatrix()` + `pathOffset` → пересчёт endpoint-ов → reset scale/angle → syncMarkups пересоздаёт Path
+- `_movedLocally` flag для чистого перемещения — syncMarkups не пересоздаёт объект
+
+**object:modified для ReviewStamp/Electrical (теперь Rect/Circle):**
+- Простые абсолютные координаты: `left/w, top/h, width*scaleX/w, height*scaleY/h` — идентично shapes
+
+**object:moving для auxLabels:**
+- `_dragStartLeft/_dragStartTop` захватываются в `before:transform`
+- Лейбл двигается синхронно с основным объектом через дельту
+
+**Создание маркапов (mouse:up):**
+- `GROUP_TYPES` (arrow, measure, polyline, reviewStamp, electricalBox, stub, panel, wireTag) — drawing object сразу удаляется с canvas (`canvas.remove(obj)`)
+- `syncMarkups` создаёт правильный объект с нуля через `renderMarkup`
+- Нет конвертации Line→Group (которая вызывала баг позиционирования)
+
+#### Batch 2 — Backend Fixes
+
+- **Roles API пустой для GENERAL_ADMIN:** `RoleController.getRoles` теперь добавляет `{ isSystem: false }` в OR для GENERAL_ADMIN без company → видит все роли
+- **Role creation для GENERAL_ADMIN:** fallback на первую компанию если `companyId` null
+- **Tag creation:** fallback companyId для GENERAL_ADMIN + P2002 (unique constraint) → чистое сообщение `Tag "X" already exists`
+- **Existing roles:** 4 роли с `companyId: null` обновлены до первой компании
+- **Frontend `useCustomRoles(companyId?)`:** принимает опциональный companyId, UserDetailDialog передаёт `user?.companyId`
+- **Tag onKeyDown:** `e.preventDefault()` + `e.stopPropagation()` + `onError: toast.error`
+
+#### Batch 3 — Edit Mode & Markup History
+
+- **DELETE в Edit mode:** `visibleMarkups` для edit mode теперь `draftMarkups.filter(Boolean)` без fallback на Y.js `markups` → удаление маркапа сразу отображается
+- **Markup History real-time:** `queryClient.invalidateQueries(['markup-history'])` после `handleApplyDrafts`, `handlePublishPersonal`, и при изменении `markups.length` (debounce 1.5s)
+
+#### Batch 4 — UI/UX Improvements
+
+- **Sticky Note в Review секции карусели** — добавлен в UserSettingsDialog wheel editor
+- **Sticky Note кастомизация (Properties Panel):** Background color, Text color, Font Family, Bold/Italic, Text Align
+- **Text (T) кастомизация:** те же контролы (ранее только для callout)
+- **Sticky Note preview на курсоре:** жёлтый квадрат с тенью следует за мышью
+- **Sticky Note размер по умолчанию:** 100×100px (было 0.18 normalized ≈ 200px)
+- **ReviewStamp text color:** заливные штампы ВСЕГДА белый текст по умолчанию (case-insensitive check)
+- **MarkupWheel performance:** hover через DOM refs (0 React re-renders/sec), убран `backdropFilter: blur`, SVG через `setAttribute`
+
+#### Batch 5 — Stability Fixes
+
+- **Zoom race condition:** `/prepare/` ответ больше не перезаписывает zoom если `hasInitializedRef` уже установлен (sessionStorage cache или user zoom)
+- **Cursor preview flicker в Live mode:** `useEffect` для cleanup preview разделён на два — preview удаляется только при смене tool/config, а не при каждом Y.js update
+- **Fabric.js textarea id:** добавлен `id="fabric-textarea-{pageNumber}"` для устранения DevTools warning
+- **skipOffscreen: false** — отключен, мог вызывать пропуск рендера объектов с CSS transform scale
+- **setDimensions guard:** не вызывается пока `textEditingMarkupId` активен
+- **canvas-container background:** принудительно transparent
+
+#### ИЗВЕСТНЫЙ БАГ (не решён)
+
+**Чёрный экран/блок при двойном клике на текст (Text, Cloud+, Sticky):**
+- Координаты и данные сохраняются корректно
+- Все guard-ы (`textEditingMarkupId`, `isEditing`, `objectCaching: false`) на месте
+- `skipOffscreen: false`, `setDimensions` guard, `preserveObjectStacking: true` — не помогли
+- `editable: false` + ручной `enterEditing()` — вызывало проблемы, откачено до `editable: canEdit && !effectiveLocked`
+- Требуется дальнейшее расследование — возможно проблема в Fabric.js v5 `enterEditing()` с CSS `transform: scale()`
+
+**Ключевые файлы Stage 31:**
+| Файл | Изменение |
+|------|-----------|
+| `frontend/src/components/pdf/MarkupLayer.tsx` | Group→Path migration, auxLabelCache, object:modified rewrite, cursor preview fixes |
+| `frontend/src/components/pdf/MarkupOverlay.tsx` | canvas-container transparent, preserveObjectStacking |
+| `frontend/src/components/pdf/MarkupPropertiesPanel.tsx` | Text/StickyNote styling controls (font, color, align) |
+| `frontend/src/components/pdf/MarkupWheel.tsx` | Performance rewrite (DOM refs, no blur) |
+| `frontend/src/components/pdf/TileViewer.tsx` | Zoom race condition fix (hasInitializedRef) |
+| `frontend/src/pages/DocumentViewPage_temp.tsx` | visibleMarkups edit fix, markup history invalidation |
+| `frontend/src/hooks/useCustomRoles.ts` | companyId param support |
+| `frontend/src/components/users/UserDetailDialog.tsx` | companyId for roles, tag onError |
+| `frontend/src/components/users/UserSettingsDialog.tsx` | Sticky Note in wheel editor |
+| `backend/src/controllers/RoleController.js` | GENERAL_ADMIN sees all roles, companyId fallback |
+| `backend/src/controllers/UserController.js` | Tag companyId fallback, P2002 clean error |
+
 ---
 
 ## 🔬 АНАЛИЗ СЛАБЫХ МЕСТ — ЧТО НУЖНО ИСПРАВИТЬ
@@ -838,7 +1509,7 @@ http://app:3030/api/documents/:docId/proxy
 ## 🚀 ПЛАН ПРОИЗВОДИТЕЛЬНОСТИ — "ВСЁ ЛЕТАЕТ"
 
 > Цель: любой чертёж (1GB+), тысячи маркапов, мгновенный отклик.
-> **Статус Stage 25:** 14 из 18 пунктов реализованы. Осталось: PERF-6 (OffscreenCanvas), PERF-13 (lazy Fabric), PERF-14 (server-side markup render), PERF-16 (cursors).
+> **Статус Stage 30:** 17 из 18 пунктов реализованы + дополнительные оптимизации (objectCaching, skipOffscreen, propHash fast-path, incremental Y.js, adaptive throttle). Осталось: PERF-6 (OffscreenCanvas), PERF-13 (lazy Fabric), PERF-14 (server-side markup render). PERF-16 (cursors) ✅ реализован в Stage 27.
 
 ---
 
@@ -1067,6 +1738,14 @@ curl -X DELETE http://localhost:3030/cache/:docId -H "Authorization: Bearer TOKE
 | `docker-compose.yml` | Конфиг деплоя |
 | `frontend/src/lib/routingAlgorithm.ts` | Routing geometry (project, offset, buildRoute) |
 | `frontend/src/components/pdf/RouteWizardDialog.tsx` | Route Wizard (template select, spacing, start) |
+| `frontend/src/components/pdf/MarkupWheel.tsx` | Dota-style radial tool menu (Q key / middle-click) |
+| `frontend/src/components/pdf/VectorSharpenOverlay.tsx` | pdfjs vector sharpening at DPR for crisp text |
+| `frontend/src/components/pdf/ReviewPanel.tsx` | QA/QC: Spell Check + Checklist + Reports (3 tabs) |
+| `frontend/src/components/users/UserSettingsDialog.tsx` | User settings: defaults, permissions, behavior, wheel, pulse |
+| `frontend/src/hooks/useUserSettings.ts` | Per-user settings hook with cross-component CustomEvent sync |
+| `frontend/src/lib/spellCheck.ts` | Typo.js spell checker for PDF text content |
+| `backend/src/controllers/ReviewController.js` | QA/QC checklist API (9 endpoints) |
+| `backend/src/routes/reviewRoutes.js` | Review routes |
 | `REVIT_INTEGRATION.md` | Документация Revit Plugin API |
 
 ---

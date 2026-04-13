@@ -70,6 +70,14 @@ class OneDriveSyncService {
 
     } catch (err) {
       console.error(`[OneDriveSync] Error syncing company ${companyId}:`, err.message);
+      // If 401/token expired — clear cached token so next sync gets a fresh one
+      if (err.message && (err.message.includes('401') || err.message.includes('token') || err.message.includes('expired') || err.message.includes('InvalidAuthenticationToken'))) {
+        console.log(`[OneDriveSync] Clearing cached access token for company ${companyId} — will refresh on next sync`);
+        await prisma.company.update({
+          where: { id: companyId },
+          data: { oneDriveAccessToken: null, oneDriveTokenExpiry: null },
+        }).catch(() => {});
+      }
     }
   }
 

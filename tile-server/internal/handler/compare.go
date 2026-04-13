@@ -2,10 +2,12 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -270,4 +272,240 @@ func emptyWebP() ([]byte, error) {
 	var buf bytes.Buffer
 	err := webp.Encode(&buf, img, &webp.Options{Lossless: true})
 	return buf.Bytes(), err
+}
+
+// DetectChanges compares two PDF pages and returns bounding boxes of changed regions.
+//
+// GET /compare/detect/{docId1}/{docId2}/{page1}/{page2}?token=...
+//
+// Returns JSON: [{ "x": 0.1, "y": 0.2, "w": 0.15, "h": 0.1 }]  (normalized 0-1)
+func (h *TileHandler) DetectChanges(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	docID1 := vars["docId1"]
+	docID2 := vars["docId2"]
+	page1, _ := strconv.Atoi(vars["page1"])
+	page2, _ := strconv.Atoi(vars["page2"])
+	token := r.URL.Query().Get("token")
+
+	// Auth
+	if token == "" {
+		http.Error(w, "Missing JWT token", http.StatusUnauthorized)
+		return
+	}
+	if _, err := h.auth.ValidateToken(token); err != nil {
+		http.Error(w, "Invalid token", http.StatusForbidden)
+		return
+	}
+
+	// Get documents from pool
+	doc1, ready1 := h.pool.GetDocumentIfReady(docID1)
+	if !ready1 {
+		http.Error(w, fmt.Sprintf("Document %s not prepared", docID1), http.StatusNotFound)
+		return
+	}
+	doc2, ready2 := h.pool.GetDocumentIfReady(docID2)
+	if !ready2 {
+		http.Error(w, fmt.Sprintf("Document %s not prepared", docID2), http.StatusNotFound)
+		return
+	}
+
+	if page1 < 0 || page1 >= doc1.PageCount {
+		http.Error(w, "page1 out of bounds", http.StatusBadRequest)
+		return
+	}
+	if page2 < 0 || page2 >= doc2.PageCount {
+		http.Error(w, "page2 out of bounds", http.StatusBadRequest)
+		return
+	}
+
+	// Render both pages at zoom level 1 (0.5x scale — good balance of speed and accuracy)
+	const detectZoom = 1
+
+	h.renderSem <- struct{}{}
+	img1, err := h.renderer.GetPageImage(doc1, page1, detectZoom)
+	<-h.renderSem
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to render doc1 page %d: %v", page1, err), http.StatusInternalServerError)
+		return
+	}
+
+	h.renderSem <- struct{}{}
+	img2, err := h.renderer.GetPageImage(doc2, page2, detectZoom)
+	<-h.renderSem
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to render doc2 page %d: %v", page2, err), http.StatusInternalServerError)
+		return
+	}
+
+	bounds1 := img1.Bounds()
+	bounds2 := img2.Bounds()
+
+	// Use the larger of the two image dimensions
+	imgW := bounds1.Dx()
+	if bounds2.Dx() > imgW {
+		imgW = bounds2.Dx()
+	}
+	imgH := bounds1.Dy()
+	if bounds2.Dy() > imgH {
+		imgH = bounds2.Dy()
+	}
+
+	if imgW == 0 || imgH == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
+	}
+
+	// Divide into grid cells
+	const gridCols = 16
+	const gridRows = 16
+	const diffThreshold = 30    // grayscale intensity difference threshold
+	const cellChangeRatio = 0.08 // 8% of pixels in cell must differ
+
+	cellW := imgW / gridCols
+	cellH := imgH / gridRows
+	if cellW < 1 {
+		cellW = 1
+	}
+	if cellH < 1 {
+		cellH = 1
+	}
+
+	// For each grid cell, count differing pixels
+	changed := make([][]bool, gridRows)
+	for gy := 0; gy < gridRows; gy++ {
+		changed[gy] = make([]bool, gridCols)
+		for gx := 0; gx < gridCols; gx++ {
+			x0 := gx * cellW
+			y0 := gy * cellH
+			x1 := x0 + cellW
+			y1 := y0 + cellH
+			if x1 > imgW {
+				x1 = imgW
+			}
+			if y1 > imgH {
+				y1 = imgH
+			}
+
+			totalPixels := 0
+			diffPixels := 0
+			for py := y0; py < y1; py++ {
+				for px := x0; px < x1; px++ {
+					totalPixels++
+					var gray1, gray2 uint8 = 255, 255
+					if px < bounds1.Max.X && py < bounds1.Max.Y {
+						r1, g1, b1, _ := img1.At(bounds1.Min.X+px, bounds1.Min.Y+py).RGBA()
+						gray1 = toGray(r1, g1, b1)
+					}
+					if px < bounds2.Max.X && py < bounds2.Max.Y {
+						r2, g2, b2, _ := img2.At(bounds2.Min.X+px, bounds2.Min.Y+py).RGBA()
+						gray2 = toGray(r2, g2, b2)
+					}
+					diff := int(gray1) - int(gray2)
+					if diff < 0 {
+						diff = -diff
+					}
+					if diff > diffThreshold {
+						diffPixels++
+					}
+				}
+			}
+
+			if totalPixels > 0 && float64(diffPixels)/float64(totalPixels) > cellChangeRatio {
+				changed[gy][gx] = true
+			}
+		}
+	}
+
+	// Flood-fill to merge adjacent changed cells into bounding boxes
+	visited := make([][]bool, gridRows)
+	for i := range visited {
+		visited[i] = make([]bool, gridCols)
+	}
+
+	type regionBox struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+		W float64 `json:"w"`
+		H float64 `json:"h"`
+	}
+	var regions []regionBox
+
+	for gy := 0; gy < gridRows; gy++ {
+		for gx := 0; gx < gridCols; gx++ {
+			if !changed[gy][gx] || visited[gy][gx] {
+				continue
+			}
+			// BFS flood fill
+			minGX, maxGX := gx, gx
+			minGY, maxGY := gy, gy
+			queue := [][2]int{{gy, gx}}
+			visited[gy][gx] = true
+
+			for len(queue) > 0 {
+				cur := queue[0]
+				queue = queue[1:]
+				cy, cx := cur[0], cur[1]
+				if cx < minGX {
+					minGX = cx
+				}
+				if cx > maxGX {
+					maxGX = cx
+				}
+				if cy < minGY {
+					minGY = cy
+				}
+				if cy > maxGY {
+					maxGY = cy
+				}
+				// 4-directional neighbors
+				for _, d := range [][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+					ny, nx := cy+d[0], cx+d[1]
+					if ny >= 0 && ny < gridRows && nx >= 0 && nx < gridCols && !visited[ny][nx] && changed[ny][nx] {
+						visited[ny][nx] = true
+						queue = append(queue, [2]int{ny, nx})
+					}
+				}
+			}
+
+			// Convert grid cell bounds to normalized 0-1 coordinates
+			// Add a small padding (half a cell) around the region
+			padCells := 0.5
+			nx := (float64(minGX) - padCells) / float64(gridCols)
+			ny := (float64(minGY) - padCells) / float64(gridRows)
+			nx2 := (float64(maxGX) + 1 + padCells) / float64(gridCols)
+			ny2 := (float64(maxGY) + 1 + padCells) / float64(gridRows)
+
+			// Clamp to 0-1
+			if nx < 0 {
+				nx = 0
+			}
+			if ny < 0 {
+				ny = 0
+			}
+			if nx2 > 1 {
+				nx2 = 1
+			}
+			if ny2 > 1 {
+				ny2 = 1
+			}
+
+			regions = append(regions, regionBox{
+				X: nx,
+				Y: ny,
+				W: nx2 - nx,
+				H: ny2 - ny,
+			})
+		}
+	}
+
+	if regions == nil {
+		regions = []regionBox{} // ensure JSON returns [] not null
+	}
+
+	log.Printf("[DetectChanges] %s/%s page %d/%d → %d region(s)", docID1, docID2, page1, page2, len(regions))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	json.NewEncoder(w).Encode(regions)
 }

@@ -52,8 +52,14 @@ class CustomRoleController {
         return res.status(403).json({ error: 'Only admins can create roles' });
       }
 
-      const targetCompanyId = isGeneralAdmin ? (companyId || currentUser.companyId) : currentUser.companyId;
-      
+      let targetCompanyId = isGeneralAdmin ? (companyId || currentUser.companyId) : currentUser.companyId;
+
+      if (!targetCompanyId && isGeneralAdmin) {
+        const first = await prisma.company.findFirst({ select: { id: true } });
+        if (!first) return res.status(400).json({ error: 'No companies exist yet' });
+        targetCompanyId = first.id;
+      }
+
       if (!targetCompanyId) {
         return res.status(400).json({ error: 'Company ID is required' });
       }

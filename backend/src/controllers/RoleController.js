@@ -15,6 +15,10 @@ class RoleController {
       } else if (currentUser.companyId) {
         OR_conditions.push({ companyId: currentUser.companyId });
       }
+      // GENERAL_ADMIN — show all roles regardless of company
+      if (currentUser.systemRole === 'GENERAL_ADMIN' && !req.query.companyId && !req.query.projectId) {
+        OR_conditions.push({ isSystem: false });
+      }
 
       const roles = await prisma.role.findMany({
         where: { OR: OR_conditions },
@@ -34,11 +38,17 @@ class RoleController {
       const { name, color, projectId, ...perms } = req.body;
       const currentUser = await prisma.user.findUnique({ where: { id: req.user.userId } });
 
+      let companyId = currentUser.companyId;
+      // GENERAL_ADMIN without company — use first available company
+      if (!companyId && currentUser.systemRole === 'GENERAL_ADMIN') {
+        const first = await prisma.company.findFirst({ select: { id: true } });
+        companyId = first?.id || null;
+      }
       const role = await prisma.role.create({
         data: {
           name,
           color,
-          companyId: projectId ? null : currentUser.companyId,
+          companyId: projectId ? null : companyId,
           projectId: projectId || null,
           isSystem: false,
           ...perms

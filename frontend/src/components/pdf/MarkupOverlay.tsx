@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import { Box } from '@mui/material';
+import { Box, alpha } from '@mui/material';
 import type { Viewport, DocInfo, PageLayout } from './TileViewer';
 import MarkupLayer from './MarkupLayer';
 import { Page, Document } from 'react-pdf';
@@ -45,6 +45,9 @@ interface MarkupOverlayProps {
   currentUserId?: string;
   isAdmin?: boolean;
   canMarkup?: boolean;
+  /** When set, only markups whose properties.sessionId matches are editable */
+  activeSessionId?: string | null;
+  showAuthorOnMarkup?: boolean;
 
   onMarkupAdded: (m: any) => void;
   onMarkupSelected: (ids: string[]) => void;
@@ -54,9 +57,14 @@ interface MarkupOverlayProps {
   onCanvasMention?: (data: { anchor: HTMLElement; query: string; onSelect: (name: string) => void; } | null) => void;
   onDeselect?: () => void;
   onSwitchToSelect?: () => void;
+  electricalConfig?: any;
   searchResults?: any[];
   activeSearchResultIndex?: number | null;
-  
+  pulseEnabled?: boolean;
+  pulseColor?: string;
+  pulseIntensity?: 'low' | 'medium' | 'high';
+  snapGrid?: number;
+
   pdfDoc?: any;
   pdfFile?: any;
   pdfOptions?: any;
@@ -68,25 +76,49 @@ interface MarkupOverlayProps {
 export default function MarkupOverlay(props: MarkupOverlayProps) {
   const { viewport, docInfo, layouts, containerWidth, containerHeight, pdfDoc } = props;
 
-  // Track the zoom level that was actually rendered on the Fabric canvas
-  const [renderedZoom, setRenderedZoom] = useState(viewport.zoom);
-  const zoomDebounceRef = useRef<any>(null);
-
-  // When viewport.zoom changes, we wait for it to settle before redrawing high-res markups.
-  // In the meantime, we use CSS scale for instant feedback.
-  // Cap renderedZoom to prevent Fabric.js canvases from becoming too large at high zoom.
-  // With enableRetinaScaling=true (DPR=2), the physical canvas is 2x larger.
-  // Cap at 2.0 so the physical canvas stays ≤ 4760×6736px per page (crisp + GPU-safe).
-  // CSS scale handles the remaining zoom factor visually (zoom/2.0 at max zoom).
-  const MAX_RENDERED_ZOOM = 2.0;
+  // ── Dynamic renderedZoom: adapts Fabric canvas resolution to viewport zoom ──
+  // Strategy: renderedZoom = snap to discrete steps so canvas isn't resized on every scroll.
+  // Steps: 1.0, 2.0, 3.0, 5.0 — covers zoom 0.1x to 20x with cssScale always ≤ 2.0.
+  // When cssScale > 1.5, we bump renderedZoom up; when < 0.5, we drop down.
+  // Debounced 300ms so rapid zooming doesn't cause canvas resize storm.
+  const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+  const [renderedZoom, setRenderedZoom] = useState(2.0);
+  const renderedZoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevRenderedZoomRef = useRef(2.0);
 
   useEffect(() => {
-    if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
-    zoomDebounceRef.current = setTimeout(() => {
-      setRenderedZoom(Math.min(viewport.zoom, MAX_RENDERED_ZOOM));
-    }, 250);
-    return () => clearTimeout(zoomDebounceRef.current);
-  }, [viewport.zoom]);
+    const maxPageH = docInfo?.pages?.reduce((m: number, p: any) => Math.max(m, p.h || 0), 0) || 1684;
+    const maxPageW = docInfo?.pages?.reduce((m: number, p: any) => Math.max(m, p.w || 0), 0) || 1190;
+    const maxDim = Math.max(maxPageW, maxPageH);
+    // Max canvas pixels: 8192px on longest side / DPR
+    const budgetMax = 8192 / (maxDim * dpr);
+
+    // Discrete steps for renderedZoom (don't resize canvas on every pixel of scroll)
+    const STEPS = [1.0, 1.5, 2.0, 3.0, Math.min(5.0, budgetMax)];
+    const vz = viewport.zoom;
+
+    // Find the best step: smallest step where cssScale (vz / step) ≤ 1.5
+    // This means the CSS magnification is at most 1.5x → sharp text
+    let best = STEPS[0];
+    for (const s of STEPS) {
+      if (vz / s <= 1.5) { best = s; break; }
+      best = s; // if all steps give cssScale > 1.5, use the largest
+    }
+    // Don't go below 1.0 or above budget
+    best = Math.max(1.0, Math.min(budgetMax, best));
+
+    // Only update if step actually changed (avoid unnecessary canvas resize)
+    if (Math.abs(best - prevRenderedZoomRef.current) < 0.01) return;
+
+    // Debounce: wait 300ms after zoom settles before resizing canvas
+    if (renderedZoomTimerRef.current) clearTimeout(renderedZoomTimerRef.current);
+    renderedZoomTimerRef.current = setTimeout(() => {
+      prevRenderedZoomRef.current = best;
+      setRenderedZoom(best);
+    }, 300);
+
+    return () => { if (renderedZoomTimerRef.current) clearTimeout(renderedZoomTimerRef.current); };
+  }, [viewport.zoom, docInfo]);
 
   // Calculate which pages are visible to avoid mounting 100 Fabric.js canvases
   const visiblePages = useMemo(() => {
@@ -134,8 +166,11 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
     const onPointerDown = () => { if (isDrawingTool) pointerDownOnCanvas.current = true; };
     const onPointerUp = () => { pointerDownOnCanvas.current = false; };
     const blockWheel = (e: WheelEvent) => {
-      // Block scroll when actively drawing OR in polyline/routeTemplate mode (multi-click)
-      if (isDrawingTool && (pointerDownOnCanvas.current || ['polyline', 'routeTemplate'].includes(props.tool))) {
+      // Block scroll when:
+      // - actively drawing (pointerDown + drawing tool)
+      // - in polyline/routeTemplate multi-click mode
+      // - pointer is down on canvas in ANY mode (vertex edit, object drag)
+      if (pointerDownOnCanvas.current || (isDrawingTool && ['polyline', 'routeTemplate'].includes(props.tool))) {
         if (!e.ctrlKey && !e.metaKey) {
           e.stopPropagation();
         }
@@ -174,6 +209,8 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
               width: page.w * renderedZoom,
               height: page.h * renderedZoom,
               pointerEvents: isPassThrough ? 'none' : 'auto',
+              // Ensure Fabric.js canvas container is always transparent (prevent black flash)
+              '& .canvas-container': { background: 'transparent !important' },
               ...(isPassThrough && { '& canvas': { pointerEvents: 'none' } }),
             }}
           >
@@ -202,6 +239,10 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
               onCanvasMention={props.onCanvasMention}
               onDeselect={props.onDeselect}
               onSwitchToSelect={props.onSwitchToSelect}
+              electricalConfig={props.electricalConfig}
+              snapGrid={props.snapGrid}
+              activeSessionId={props.activeSessionId}
+              showAuthorOnMarkup={props.showAuthorOnMarkup}
             />
             {/* Active Search Match Highlight Overlay */}
             {props.searchResults && props.activeSearchResultIndex !== null && props.activeSearchResultIndex !== undefined && (
@@ -238,6 +279,128 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
                 );
               })
             )}
+            {/* Pulsating markup highlights — SVG shape-adaptive, rotates with markup */}
+            {props.markups
+              .filter(m => m.pageNumber === page.index && m.properties?.pulse && m.id && !m.id.startsWith('preview') && m.type !== 'stickyNote')
+              .map(m => {
+                const coords = m.coordinates || {};
+                const hasRect = coords.left != null && coords.width != null;
+                let nx: number, ny: number, nw: number, nh: number;
+                if (hasRect) {
+                  nx = coords.left; ny = coords.top ?? 0; nw = coords.width; nh = coords.height ?? nw;
+                } else {
+                  const x1 = coords.x1 ?? 0, y1 = coords.y1 ?? 0, x2 = coords.x2 ?? x1, y2 = coords.y2 ?? y1;
+                  nx = Math.min(x1, x2); ny = Math.min(y1, y2);
+                  nw = Math.abs(x2 - x1) || 0.05; nh = Math.abs(y2 - y1) || 0.05;
+                }
+                const pw = page.w * renderedZoom, ph = page.h * renderedZoom;
+                const sw = ((m.properties?.strokeWidth || 2) * renderedZoom) / 2;
+                const angle = coords.angle || 0;
+
+                // Compute REAL center accounting for Fabric.js left/top adjustment on rotation
+                const halfW = nw * pw / 2;
+                const halfH = nh * ph / 2;
+                const rad = angle * Math.PI / 180;
+                const cosA = Math.cos(rad);
+                const sinA = Math.sin(rad);
+                const cx = nx * pw + halfW * cosA - halfH * sinA;
+                const cy = ny * ph + halfW * sinA + halfH * cosA;
+
+                const pulseColor = props.pulseColor || '#00e5ff';
+                const cssScale = viewport.zoom / renderedZoom || 1;
+                const screenPx = props.pulseIntensity === 'high' ? 3 : props.pulseIntensity === 'low' ? 1 : 2;
+                const expand = screenPx / cssScale;
+                const strokeW = Math.max(1, 1.5 / cssScale);
+                let boxW = nw * pw + sw * 2 + expand * 2;
+                let boxH = nh * ph + sw * 2 + expand * 2;
+                const glowBlur = props.pulseIntensity === 'high' ? 5 : props.pulseIntensity === 'low' ? 2 : 3;
+
+                // ── Determine pulse shape from markup type + stampShape ──
+                const mType = m.type;
+                const stampShape = m.properties?.stampShape;
+                type PulseShape = 'rect' | 'rounded' | 'circle' | 'diamond' | 'triangle' | 'cloud' | 'ellipse';
+                let shape: PulseShape = 'rect';
+                if (mType === 'circle' || mType === 'stub' || stampShape === 'circle') shape = 'circle';
+                else if (mType === 'ellipse') shape = 'ellipse';
+                else if (stampShape === 'diamond') shape = 'diamond';
+                else if (stampShape === 'triangle') shape = 'triangle';
+                else if (stampShape === 'cloud' || mType === 'cloud' || mType === 'callout') shape = 'cloud';
+                else if (stampShape === 'rounded') shape = 'rounded';
+
+                // For circle, make box square using max dimension
+                if (shape === 'circle') {
+                  const side = Math.max(boxW, boxH);
+                  boxW = side; boxH = side;
+                }
+
+                // ── Build SVG outline path based on shape ──
+                const p = strokeW / 2; // inset for stroke
+                let svgContent: React.ReactNode;
+                switch (shape) {
+                  case 'circle':
+                    svgContent = <ellipse cx={boxW / 2} cy={boxH / 2} rx={boxW / 2 - p} ry={boxH / 2 - p}
+                      fill="none" stroke={pulseColor} strokeWidth={strokeW} />;
+                    break;
+                  case 'ellipse':
+                    svgContent = <ellipse cx={boxW / 2} cy={boxH / 2} rx={boxW / 2 - p} ry={boxH / 2 - p}
+                      fill="none" stroke={pulseColor} strokeWidth={strokeW} />;
+                    break;
+                  case 'diamond':
+                    svgContent = <polygon
+                      points={`${boxW / 2},${p} ${boxW - p},${boxH / 2} ${boxW / 2},${boxH - p} ${p},${boxH / 2}`}
+                      fill="none" stroke={pulseColor} strokeWidth={strokeW} strokeLinejoin="round" />;
+                    break;
+                  case 'triangle':
+                    svgContent = <polygon
+                      points={`${boxW / 2},${p} ${p},${boxH - p} ${boxW - p},${boxH - p}`}
+                      fill="none" stroke={pulseColor} strokeWidth={strokeW} strokeLinejoin="round" />;
+                    break;
+                  case 'cloud': {
+                    const rx = Math.min(boxW, boxH) * 0.25;
+                    svgContent = <rect x={p} y={p} width={boxW - strokeW} height={boxH - strokeW}
+                      rx={rx} ry={rx} fill="none" stroke={pulseColor} strokeWidth={strokeW} />;
+                    break;
+                  }
+                  case 'rounded': {
+                    const rr = Math.min(boxW, boxH) * 0.35;
+                    svgContent = <rect x={p} y={p} width={boxW - strokeW} height={boxH - strokeW}
+                      rx={rr} ry={rr} fill="none" stroke={pulseColor} strokeWidth={strokeW} />;
+                    break;
+                  }
+                  default: {
+                    const dr = Math.min(3 / cssScale, boxW * 0.04, boxH * 0.04);
+                    svgContent = <rect x={p} y={p} width={boxW - strokeW} height={boxH - strokeW}
+                      rx={dr} ry={dr} fill="none" stroke={pulseColor} strokeWidth={strokeW} />;
+                  }
+                }
+
+                return (
+                  <Box key={`pulse-${m.id}`}
+                    sx={{
+                      position: 'absolute',
+                      left: cx - boxW / 2,
+                      top: cy - boxH / 2,
+                      width: boxW,
+                      height: boxH,
+                      pointerEvents: 'none',
+                      zIndex: 15,
+                      transform: angle ? `rotate(${angle}deg)` : 'none',
+                      transformOrigin: 'center center',
+                      // drop-shadow follows SVG shape outline (unlike boxShadow which is rect-only)
+                      animation: 'markupPulse 2s ease-in-out infinite',
+                      '@keyframes markupPulse': {
+                        '0%': { opacity: 0.3, filter: `drop-shadow(0 0 0px ${pulseColor}30)` },
+                        '50%': { opacity: 0.9, filter: `drop-shadow(0 0 ${glowBlur}px ${pulseColor}60)` },
+                        '100%': { opacity: 0.3, filter: `drop-shadow(0 0 0px ${pulseColor}30)` },
+                      },
+                    }}
+                  >
+                    <svg width={boxW} height={boxH} style={{ display: 'block' }}>
+                      {svgContent}
+                    </svg>
+                  </Box>
+                );
+              })}
           </Box>
         );
       })}

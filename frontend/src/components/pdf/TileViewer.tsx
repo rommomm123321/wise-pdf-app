@@ -285,8 +285,13 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
 
   // Sync zero-lag transform to React DOM reconciliation.
   // This guarantees that the instant React applies the new viewport to the markups,
-  // the wrapper's translation/scale offset is flawlessly reset to zero BEFORE the browser paints!
+  // Reset CSS transform on childrenWrapper BEFORE browser paints.
+  // This is fast (no canvas redraw) — just resets the compensating transform to identity.
   useLayoutEffect(() => {
+    if (childrenWrapperRef.current) {
+      childrenWrapperRef.current.style.transform = 'translate(0px, 0px) scale(1)';
+    }
+    // Also redraw tiles (but the transform reset above prevents jitter)
     renderCanvasRef.current();
   }, [viewport]);
 
@@ -562,8 +567,13 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
         setCachedTile(key, bitmap);
         inFlightRef.current.delete(key);
         if (!initialLoadDoneRef.current) {
-          initialLoadDoneRef.current = true;
-          setLoadPhase(2);
+          // Only hide loading overlay when a tile at the CURRENT zoom level loads
+          // (not a prefetched zoom-0 thumbnail that's invisible at the current zoom)
+          const currentLevel = getZoomLevel(viewportRef.current.zoom);
+          if (zoom >= currentLevel || zoom >= 2) {
+            initialLoadDoneRef.current = true;
+            setLoadPhase(2);
+          }
         }
         renderCanvasRef.current();
         startFadeLoop();
@@ -587,8 +597,35 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
     if (!documentId || !token) return;
     const ac = new AbortController();
 
-    // Poll /prepare/{docId}/status every 500ms while prepare is pending
-    // This gives real-time progress for 800-900 MB files without blocking the UI
+    // OPTIMIZATION: Use cached DocInfo for instant display on repeat visits
+    const cacheKey = `docinfo-${documentId}`;
+    const cached = (() => { try { const s = sessionStorage.getItem(cacheKey); return s ? JSON.parse(s) as DocInfo : null; } catch { return null; } })();
+    if (cached && cached.pages?.length > 0) {
+      // Instant init from cache — show content immediately
+      docInfoRef.current = cached;
+      setDocInfo(cached);
+      setLoadPhase(1);
+      onDocInfo?.(cached);
+      // Auto-fit from cached info
+      requestAnimationFrame(() => {
+        if (!containerRef.current) return;
+        hasInitializedRef.current = true; // mark so /prepare/ response won't overwrite
+        const page = cached.pages[0];
+        if (!page) return;
+        const cw = containerRef.current.clientWidth;
+        const ch = containerRef.current.clientHeight;
+        const MARGIN = 32;
+        const z = Math.min((cw - MARGIN * 2) / page.w, (ch - MARGIN * 2) / page.h, 10);
+        const next = { zoom: z, x: 0, y: -MARGIN / z };
+        viewportRef.current = next;
+        setViewport(next);
+        lastOnZoomRef.current = z;
+        if (onZoom) onZoom(z);
+        renderCanvasRef.current();
+      });
+    }
+
+    // Poll /prepare/{docId}/status every 250ms while prepare is pending
     let statusInterval: ReturnType<typeof setInterval> | null = null;
     const startStatusPolling = () => {
       statusInterval = setInterval(async () => {
@@ -604,7 +641,7 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
             setDownloadProgress({ written: data.written, total: data.total, percent: data.percent });
           }
         } catch { /* ignore poll errors */ }
-      }, 500);
+      }, 250);
     };
     startStatusPolling();
 
@@ -620,14 +657,20 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
         if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
         setDownloadProgress(null);
         onWsStatus?.(true);
-        docInfoRef.current = info;       // sync ref for imperative handle
+        docInfoRef.current = info;
         setDocInfo(info);
         setLoadPhase(p => Math.max(p, 1) as 0 | 1 | 2);
         onDocInfo?.(info);
+        // Cache DocInfo for instant load next time
+        try { sessionStorage.setItem(cacheKey, JSON.stringify(info)); } catch { /* quota */ }
 
-        // Auto-fit: open document at Fit-Page zoom so it's not too close/far
+        // Auto-fit: open document at Fit-Page zoom — but ONLY if user hasn't zoomed yet.
+        // If sessionStorage cached DocInfo, fit was already applied. If user zoomed manually
+        // before /prepare/ responded, don't overwrite their zoom.
         requestAnimationFrame(() => {
           if (!containerRef.current) return;
+          if (hasInitializedRef.current) return; // user already interacted or cache fit already applied
+          hasInitializedRef.current = true;
           const page = info.pages[0];
           if (!page) return;
           const cw = containerRef.current.clientWidth;
@@ -747,15 +790,40 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
   }, [documentId, token, decodeTileImage, startFadeLoop, fetchTile]);
 
   // ─── Zoom level helpers ────────────────────────────────────────────────────
-  const getZoomLevel = (zoom: number): number => {
-    if (zoom <= 0.32) return 0;
-    if (zoom <= 0.65) return 1;
-    if (zoom <= 1.3)  return 2;
-    if (zoom <= 2.6)  return 3;
-    return 4;
-  };
+  // Use higher tile resolution sooner for crisper rendering
+  // Max pixel budget for 8x: 60M pixels (must match Go renderer cap)
+  const MAX_8X_PIXELS = 60_000_000;
+  const screenDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
 
-  const getScaleForLevel = (level: number) => [0.25, 0.5, 1.0, 2.0, 4.0, 8.0][level] ?? 1.0;
+  const getZoomLevel = useCallback((zoom: number): number => {
+    // Choose tile zoom level so tiles are NEVER visually upscaled on screen.
+    // upscale ratio = zoom × DPR / scale — must be ≤ 1.0 for zero upscale.
+    // This means scale ≥ zoom × DPR — always request enough pixels.
+    const needed = zoom * screenDpr;
+    // scales: [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
+    // Each level's max "needed" = its scale value (upscale ratio exactly 1.0)
+    let level: number;
+    if (needed <= 0.25) level = 0;
+    else if (needed <= 0.5)  level = 1;
+    else if (needed <= 1.0)  level = 2;
+    else if (needed <= 2.0)  level = 3;
+    else if (needed <= 4.0)  level = 4;
+    else level = 5;
+
+    // Zoom 5 (8x): only if pages are small enough
+    if (level >= 5) {
+      const pages = docInfoRef.current?.pages;
+      if (pages && pages.length > 0) {
+        const maxW = pages.reduce((m: number, p: any) => Math.max(m, p.w || 0), 0);
+        const maxH = pages.reduce((m: number, p: any) => Math.max(m, p.h || 0), 0);
+        const pxAt8x = (maxW * 4) * (maxH * 4);
+        if (pxAt8x > MAX_8X_PIXELS) level = 4;
+      }
+    }
+    return level;
+  }, [screenDpr]);
+
+  const getScaleForLevel = (level: number) => [0.25, 0.5, 1.0, 2.0, 4.0, 8.0][level] ?? 4.0;
 
   // ─── Calculate which tiles are currently visible ───────────────────────────
   type TileKey = { key: string; page: number; zoomLevel: number; x: number; y: number; screenX: number; screenY: number; w: number; h: number };
@@ -839,12 +907,15 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
         }
       }
 
-      // Fetch visible tiles + 1-tile buffer (reduced from 2× to lower server load)
+      // Fetch visible tiles + buffer
       // While zoom is settling (user actively zooming), only load zoom-0 thumbnail as fallback
       const zooming = isZoomingRef.current;
-      const bufferPx = TILE_SIZE * 1; // 1× buffer: enough for smooth pan, lighter on server
       const level = getZoomLevel(vp.zoom);
       const levelScale = getScaleForLevel(level);
+      // Zoom 5 (8x): no buffer, strict visible only, max 16 tiles per sync
+      const isHiRes = level >= 5;
+      const bufferPx = isHiRes ? 0 : TILE_SIZE * 1;
+      let hiResFetched = 0;
 
       if (!zooming) {
         for (const p of pageLayouts) {
@@ -859,13 +930,16 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
           const rows = Math.ceil(p.h / tileWorldSize);
           for (let tx = 0; tx < cols; tx++) {
             for (let ty = 0; ty < rows; ty++) {
+              if (isHiRes && hiResFetched >= 16) break; // limit 8x tiles per sync cycle
               const sx = (cc + p.worldX + tx * tileWorldSize - vp.x) * vp.zoom;
               const sy = (p.worldY + ty * tileWorldSize - vp.y) * vp.zoom;
               const sw = tileWorldSize * vp.zoom;
               if (sx + sw > -bufferPx && sx < cw + bufferPx && sy + sw > -bufferPx && sy < ch + bufferPx) {
                 fetchTile(p.index, level, tx, ty);
+                if (isHiRes) hiResFetched++;
               }
             }
+            if (isHiRes && hiResFetched >= 16) break;
           }
         }
       }
@@ -986,6 +1060,7 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
       }
     }
 
+    // Smoothing ON for fallback thumbnails (hide pixelation on stretched low-res)
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
@@ -1007,6 +1082,16 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
         ctx.globalAlpha = 1;
       }
     }
+
+    // Smart smoothing for HD tiles:
+    // - When tile scale matches screen (upscale ≤ 1.05): smoothing OFF → pixel-perfect
+    // - When tiles are being upscaled (zoom between levels): smoothing ON → smooth text
+    const level = getZoomLevel(vp.zoom);
+    const tileScale = getScaleForLevel(level);
+    const effectiveZoom = vp.zoom * dpr;
+    const upscaleRatio = effectiveZoom / tileScale;
+    ctx.imageSmoothingEnabled = upscaleRatio > 1.05;
+    if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = 'high';
 
     // Draw actual tiles with fade-in; pyramid fallback for missing tiles
     for (const t of tiles) {
@@ -1077,11 +1162,11 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
     };
   }, []);
 
-  // ─── Mouse wheel: Bluebeam-style zoom-to-cursor ──────────────────────────
+  // ─── Mouse wheel: Miro-style smooth zoom-to-cursor ──────────────────────
   // Rules:
-  //   Ctrl+wheel  → zoom exactly 1 discrete level, anchored to mouse cursor
-  //   wheel alone → scroll (pan) only, no zoom (same as Bluebeam)
-  //   Trackpad    → accumulator prevents accidental multi-level jumps
+  //   Ctrl+wheel (or page mode)  → smooth continuous zoom anchored to mouse cursor
+  //   wheel alone                → scroll (pan) only, no zoom
+  //   Both mouse and trackpad    → continuous factor from deltaY (no accumulator)
   const handleWheelRef = useRef<(e: WheelEvent) => void>(() => {});
   handleWheelRef.current = (e: WheelEvent) => {
     e.preventDefault();
@@ -1099,23 +1184,8 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
     const isPageMode = scrollModeRef.current === 'page';
 
     if (isCtrl || isPageMode) {
-      // ── ZOOM TO CURSOR ─────────────────────────────────────────────────
+      // ── SMOOTH ZOOM TO CURSOR (Miro-style) ─────────────────────────────
       if (!containerRef.current) return;
-
-      // Trackpad sends many small deltaY events; standard mouse wheel sends large ones (100–120).
-      // Accumulate until we have "enough" signal for exactly one level jump.
-      const delta = e.deltaY;
-      wheelAccumulatorRef.current += delta;
-
-      // Standard mouse: |delta| ≥ 50 → fire immediately (1 level).
-      // Trackpad: accumulate until ±40 threshold to avoid multi-level jumps.
-      const isStandardMouse = Math.abs(delta) >= 50;
-      const TRACKPAD_THRESHOLD = 40;
-
-      if (!isStandardMouse && Math.abs(wheelAccumulatorRef.current) < TRACKPAD_THRESHOLD) return;
-
-      const zoomIn = wheelAccumulatorRef.current < 0;
-      wheelAccumulatorRef.current = 0; // consume
 
       const prev = viewportRef.current;
       const rect = containerRef.current.getBoundingClientRect();
@@ -1125,31 +1195,21 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
       const mouseScreenY = e.clientY - rect.top;
       const containerCenterX = containerRef.current.clientWidth / 2;
 
-      // ── Find next discrete zoom level (always ±1 step) ──
-      let currentIdx = 0;
-      let minDiff = Infinity;
-      for (let i = 0; i < ZOOM_LEVELS.length; i++) {
-        const diff = Math.abs(ZOOM_LEVELS[i] - prev.zoom);
-        if (diff < minDiff) { minDiff = diff; currentIdx = i; }
-      }
-      const nextIdx = Math.max(0, Math.min(ZOOM_LEVELS.length - 1,
-        zoomIn ? currentIdx + 1 : currentIdx - 1
-      ));
-      const nextZoom = ZOOM_LEVELS[nextIdx];
-      if (nextZoom === prev.zoom) return; // already at limit
+      // Continuous zoom factor from deltaY:
+      // - Mouse wheel: deltaY ≈ ±100 → factor ≈ 0.9 or 1.1 (10% per tick)
+      // - Trackpad pinch: deltaY ≈ ±2..±20 → proportional fine-grained zoom
+      // Sensitivity: smaller = more granular zoom. 300 feels like Miro.
+      const ZOOM_SENSITIVITY = 300;
+      const factor = Math.pow(2, -e.deltaY / ZOOM_SENSITIVITY);
+      const MIN_ZOOM = ZOOM_LEVELS[0];
+      const MAX_ZOOM = ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
+      const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.zoom * factor));
+
+      // Skip if barely changed (avoids float jitter)
+      if (Math.abs(nextZoom - prev.zoom) < 0.001) return;
 
       // ── Zoom-to-cursor formula ──
       // The world coordinate under the mouse must stay fixed after zoom.
-      //
-      // World X under mouse:
-      //   worldX = viewX + (mouseScreenX - containerCenterX) / currentZoom
-      //
-      // After zoom, to keep worldX under the same screen pixel:
-      //   newViewX = worldX - (mouseScreenX - containerCenterX) / nextZoom
-      //
-      // Same logic for Y (no centering offset — Y is measured from top of viewport):
-      //   worldY = viewY + mouseScreenY / currentZoom
-      //   newViewY = worldY - mouseScreenY / nextZoom
       const worldX = prev.x + (mouseScreenX - containerCenterX) / prev.zoom;
       const worldY = prev.y + mouseScreenY / prev.zoom;
 
@@ -1160,11 +1220,6 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
       const next = { zoom: nextZoom, x, y };
 
       viewportRef.current = next;
-      // Immediately draw canvas + apply CSS transform on childrenWrapper for zero-lag markup sync.
-      // We do NOT call setViewport here — that would trigger a React re-render on every scroll tick
-      // (60fps), causing Fabric.js to re-render all markup canvases. With many markups this freezes.
-      // Instead, the CSS transform in renderCanvas() handles visual feedback synchronously,
-      // and React state is committed once after zoom settles (180ms debounce below).
       renderCanvasRef.current();
 
       const cb = onZoomRef.current;
@@ -1176,7 +1231,7 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
       zoomSettleRef.current = setTimeout(() => {
         isZoomingRef.current = false;
         setViewport({ ...viewportRef.current });
-      }, 180);
+      }, 150);
 
     } else {
       // ── SCROLL (pan) only — no zoom ───────────────────────────────────
@@ -1286,7 +1341,7 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
         zoomSettleRef.current = setTimeout(() => {
           isZoomingRef.current = false;
           setViewport({ ...viewportRef.current });
-        }, 180);
+        }, 120);
         return;
       }
 
@@ -1325,10 +1380,17 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
   const stableWheelHandler = useRef((e: WheelEvent) => handleWheelRef.current(e)).current;
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.addEventListener('wheel', stableWheelHandler, { passive: false });
-    return () => el.removeEventListener('wheel', stableWheelHandler);
+    // Retry attaching wheel handler — containerRef may not be ready on first render
+    const attach = () => {
+      const el = containerRef.current;
+      if (!el) { requestAnimationFrame(attach); return; }
+      el.addEventListener('wheel', stableWheelHandler, { passive: false });
+    };
+    attach();
+    return () => {
+      const el = containerRef.current;
+      if (el) el.removeEventListener('wheel', stableWheelHandler);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty — handler is stable via ref
 
@@ -1380,7 +1442,7 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
       zoomSettleRef.current = setTimeout(() => {
         isZoomingRef.current = false;
         setViewport({ ...viewportRef.current });
-      }, 180);
+      }, 120);
       return;
     }
 
@@ -1774,7 +1836,7 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
         }}
       />
       {children && (
-        <Box ref={childrenWrapperRef} sx={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', transformOrigin: '0 0', pointerEvents: 'none', '& > *': { pointerEvents: 'auto' } }}>
+        <Box ref={childrenWrapperRef} sx={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', transformOrigin: '0 0', pointerEvents: 'none', willChange: 'transform', '& > *': { pointerEvents: 'auto' } }}>
           {children(viewport, docInfo, pageLayouts, containerSize.w, containerSize.h)}
         </Box>
       )}

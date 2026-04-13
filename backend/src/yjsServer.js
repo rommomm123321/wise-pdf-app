@@ -131,6 +131,27 @@ module.exports = function setupYjsWebSocket(wss, io) {
                           },
                         }
                       }).catch(() => {});
+
+                      // Markup history (changelog)
+                      await prisma.markupHistory.create({
+                        data: {
+                          action: isNew ? 'ADD' : 'MODIFY',
+                          documentId: m.documentId || documentId,
+                          markupId: key,
+                          authorId: actorId,
+                          snapshot: {
+                            id: key,
+                            type: m.type,
+                            pageNumber: m.pageNumber,
+                            documentId: m.documentId || documentId,
+                            authorId: m.authorId,
+                            coordinates: m.coordinates || {},
+                            properties: m.properties || {},
+                            allowedEditUserIds: m.allowedEditUserIds || [],
+                            allowedDeleteUserIds: m.allowedDeleteUserIds || [],
+                          },
+                        }
+                      }).catch(() => {});
                     }
 
                     // Process @mentions — only when relevant fields actually changed (prevents spam)
@@ -176,6 +197,22 @@ module.exports = function setupYjsWebSocket(wss, io) {
                       userId: existing.authorId,
                       documentId: existing.documentId || documentId,
                       details: { markupId: key, type: existing.type },
+                    }
+                  }).catch(() => {});
+
+                  // Markup history (changelog)
+                  await prisma.markupHistory.create({
+                    data: {
+                      action: 'DELETE',
+                      documentId: existing.documentId || documentId,
+                      markupId: key,
+                      authorId: existing.authorId,
+                      snapshot: {
+                        id: key,
+                        type: existing.type,
+                        documentId: existing.documentId || documentId,
+                        authorId: existing.authorId,
+                      },
                     }
                   }).catch(() => {});
                 }

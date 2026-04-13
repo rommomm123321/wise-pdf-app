@@ -71,6 +71,7 @@ model Company {
   roles       Role[]
   tags        CompanyTag[]
   markupPresets MarkupPropertyPreset[]
+  checklistTemplates ChecklistTemplate[]
 }
 
 model CompanyTag {
@@ -158,6 +159,10 @@ model User {
   markupPresets       MarkupPropertyPreset[]
   notificationsReceived Notification[] @relation("NotificationsReceived")
   notificationsSent     Notification[] @relation("NotificationsSent")
+  checklistTemplatesCreated ChecklistTemplate[] @relation("ChecklistTemplateCreator")
+  reviewsAsInspector  ReviewSession[] @relation("ReviewInspector")
+  reviewsAsAssignee   ReviewSession[] @relation("ReviewAssignee")
+  markupHistory       MarkupHistory[]
 }
 
 model ProjectAssignment {
@@ -322,6 +327,8 @@ model Document {
   updatedAt   DateTime @updatedAt
 
   markups     Markup[]
+  reviews     ReviewSession[]
+  history     MarkupHistory[]
 }
 model Markup {
   id          String   @id @default(uuid())
@@ -393,4 +400,88 @@ model ProjectMarkupField {
 
   @@unique([projectId, key])
   @@index([projectId])
+}
+
+model ChecklistTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  category    String?
+  items       Json     // [{id, title, description, type: 'pass_fail'|'yes_no'|'numeric'|'text', required: bool, group?: string}]
+
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User     @relation("ChecklistTemplateCreator", fields: [createdById], references: [id])
+
+  reviews     ReviewSession[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ReviewSession {
+  id            String   @id @default(uuid())
+  status        String   @default("in_progress") // in_progress, completed, closed
+
+  documentId    String
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  templateId    String?
+  template      ChecklistTemplate? @relation(fields: [templateId], references: [id])
+  inspectorId   String
+  inspector     User     @relation("ReviewInspector", fields: [inspectorId], references: [id])
+  assigneeId    String?
+  assignee      User?    @relation("ReviewAssignee", fields: [assigneeId], references: [id])
+
+  summary          String?  // inspector's final notes
+  documentVersion  Int?     // which version number this review was made on
+  items            ReviewItem[]
+
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+  updatedAt     DateTime @updatedAt
+}
+
+enum MarkupHistoryAction {
+  ADD
+  MODIFY
+  DELETE
+}
+
+model MarkupHistory {
+  id          String              @id @default(uuid())
+  action      MarkupHistoryAction
+  documentId  String
+  document    Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  markupId    String              // plain String, NOT FK (markup may be deleted)
+  authorId    String
+  author      User                @relation(fields: [authorId], references: [id])
+  snapshot    Json                // full markup state at event time
+  createdAt   DateTime            @default(now())
+
+  @@index([documentId, createdAt])
+  @@index([markupId])
+}
+
+model ReviewItem {
+  id              String   @id @default(uuid())
+  sessionId       String
+  session         ReviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  templateItemId  String   // matches item.id from template JSON
+  title           String?  // item title stored directly for persistence
+  groupName       String?  // group label
+
+  result          String?  // pass, fail, skip, na
+  comment         String?
+  photoUrl        String?
+
+  pageNumber      Int?
+  pinX            Float?   // normalized 0-1
+  pinY            Float?   // normalized 0-1
+
+  fixedAt         DateTime?
+  fixedById       String?
+  fixedComment    String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

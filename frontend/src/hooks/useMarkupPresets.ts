@@ -12,6 +12,7 @@ export interface MarkupPropertyPreset {
   id: string;
   name: string;
   fields: PresetField[];
+  markupType?: string;
   companyId: string;
   createdBy: { id: string; name: string };
   createdAt: string;
@@ -29,7 +30,7 @@ export function useMarkupPresets() {
 export function useCreatePreset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; fields: PresetField[] }) =>
+    mutationFn: (data: { name: string; fields: PresetField[]; markupType?: string }) =>
       apiFetch('/api/presets', { method: 'POST', body: JSON.stringify(data) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['markupPresets'] }),
   });

@@ -8,13 +8,20 @@ import CloseIcon from '@mui/icons-material/Close';
 import CheckIcon from '@mui/icons-material/Check';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
+import FormatBoldIcon from '@mui/icons-material/FormatBold';
+import FormatItalicIcon from '@mui/icons-material/FormatItalic';
+import FormatAlignLeftIcon from '@mui/icons-material/FormatAlignLeft';
+import FormatAlignCenterIcon from '@mui/icons-material/FormatAlignCenter';
+import FormatAlignRightIcon from '@mui/icons-material/FormatAlignRight';
 import FlipToFrontIcon from '@mui/icons-material/FlipToFront';
 import FlipToBackIcon from '@mui/icons-material/FlipToBack';
+import ConstructionIcon from '@mui/icons-material/Construction';
 import PersonIcon from '@mui/icons-material/Person';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { apiFetch } from '../../lib/api';
+import toast from 'react-hot-toast';
 import { useProjectUsers, type ProjectUser } from '../../hooks/useProjectUsers';
 import { LINE_STYLES, LinePreview } from './PdfToolbar';
 import { formatMeasurement } from './MarkupLayer';
@@ -37,6 +44,7 @@ interface MarkupPropertiesPanelProps {
   currentUserId?: string;
   isAdmin?: boolean;
   docScale?: string;
+  onPresetSaved?: () => void;
 }
 
 function getCommonValue(markups: any[], key: string): any {
@@ -84,8 +92,23 @@ const PropertySlider = ({ label, value, onChange, min = 0, max = 100, step = 1, 
   );
 };
 
+// Style keys saved in a simple Tool Chest preset (no geometry)
+export const TOOL_CHEST_STYLE_KEYS = [
+  'stroke', 'strokeWidth', 'lineStyle', 'fill', 'fillOpacity', 'textColor',
+  'fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'textAlign',
+  'arrowSize', 'arrowStyle', 'cloudArcSize', 'textBoxFill', 'textBoxStroke',
+  'connectorStyle', 'tickSize', 'extensionSize', 'stampShape', 'stampFill',
+  'subject', 'status', 'text', 'labelTextColor', 'labelBg',
+];
+// These types support simple style presets (not full-copy stamps)
+export const SIMPLE_PRESET_TYPES = new Set([
+  'line', 'arrow', 'measure', 'rect', 'circle', 'ellipse', 'triangle', 'diamond',
+  'hexagon', 'star', 'cloud', 'callout', 'text', 'polyline', 'highlighter', 'pen',
+  'reviewStamp', 'routeTemplate', 'route',
+]);
+
 const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
-  open, selectedMarkups, onClose, onUpdateProperties, projectId, onAction, markups: allMarkups, canEdit = true, currentUserId, isAdmin = false, docScale = '1:1'
+  open, selectedMarkups, onClose, onUpdateProperties, projectId, onAction, markups: allMarkups, canEdit = true, currentUserId, isAdmin = false, docScale = '1:1', onPresetSaved
 }: MarkupPropertiesPanelProps) {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -111,9 +134,9 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
   const [commentDraft, setCommentDraft] = useState<string | null>(null);
   const [commentFocused, setCommentFocused] = useState(false);
   const [threadDraft, setThreadDraft] = useState('');
-  const [presets, setPresets] = useState<any[]>([]);
-  const [savePresetName, setSavePresetName] = useState('');
-  const [isSavingPreset, setIsSavingPreset] = useState(false);
+  const [chestNameOpen, setChestNameOpen] = useState(false);
+  const [chestNameInput, setChestNameInput] = useState('');
+  const [chestSaving, setChestSaving] = useState(false);
 
   useEffect(() => {
     if (open && projectId) {
@@ -122,9 +145,6 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
         .then(data => { if (Array.isArray(data)) setCustomFields(data); })
         .catch(err => console.error(err))
         .finally(() => setLoadingFields(false));
-      apiFetch<any>('/api/presets')
-        .then(res => { if (Array.isArray(res?.data)) setPresets(res.data); })
-        .catch(() => {});
     }
   }, [open, projectId]);
 
@@ -139,7 +159,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
 
   // Visual properties (color, width, line style, fill, etc.) ALWAYS apply only to selected markups.
   // Template mode (useTemplate) applies ONLY to text fields (subject, comment, custom params).
-  const VISUAL_KEYS = new Set(['stroke', 'fill', 'fillOpacity', 'strokeWidth', 'lineStyle', 'fontSize', 'textColor', 'borderColor', 'borderWidth', 'arrowSize', 'arrowStyle']);
+  const VISUAL_KEYS = new Set(['stroke', 'fill', 'fillOpacity', 'strokeWidth', 'lineStyle', 'fontSize', 'textColor', 'borderColor', 'borderWidth', 'arrowSize', 'arrowStyle', 'stampShape', 'stampFill']);
 
   const savePropertyImmediate = useCallback((key: string, value: any) => {
     const isVisual = VISUAL_KEYS.has(key);
@@ -172,10 +192,31 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
     if (immediate) savePropertyImmediate(key, value); else saveProperty(key, value);
   }, [saveProperty, savePropertyImmediate]);
 
-  const handleAddField = async () => {
-    if (!newFieldName.trim() || !projectId) return;
-    const res = await apiFetch(`/api/project-markup-fields/${projectId}`, { method: 'POST', body: JSON.stringify({ key: newFieldName.trim(), type: 'text' }) });
-    setCustomFields(prev => [...prev, res]); setNewFieldName(''); setIsAddingField(false);
+  const [addFieldForAll, setAddFieldForAll] = useState(false);
+  const [addFieldError, setAddFieldError] = useState('');
+
+  // Add a custom property — either to selected markup(s) only or to ALL markups
+  const handleAddField = () => {
+    if (!newFieldName.trim()) return;
+    const key = newFieldName.trim();
+
+    // Check for duplicate name
+    const projectFieldKeys = new Set(customFields.map((f: any) => f.key));
+    const first = selectedMarkups[0];
+    const existingKeys = first?.properties ? Object.keys(first.properties) : [];
+    if (projectFieldKeys.has(key) || existingKeys.includes(key)) {
+      setAddFieldError(`Parameter "${key}" already exists`);
+      return;
+    }
+    setAddFieldError('');
+
+    const targets = addFieldForAll ? (allMarkups || []) : selectedMarkups;
+    targets.forEach((m: any) => {
+      onUpdateProperties(m.id, { properties: { ...m.properties, [key]: '' } });
+    });
+    setNewFieldName('');
+    setIsAddingField(false);
+    setAddFieldForAll(false);
   };
 
   const handleMentionInput = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>, field: string) => {
@@ -236,29 +277,31 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
     handleLocalChange(field, restricted ? [] : ['*'], true);
   };
 
-  const PRESET_VISUAL_KEYS = ['stroke', 'fill', 'fillOpacity', 'strokeWidth', 'lineStyle', 'textColor', 'fontSize'];
-
-  const applyPreset = (preset: any) => {
-    if (!canEdit) return;
-    (preset.fields || []).forEach((f: any) => {
-      if (f.defaultValue !== undefined && f.defaultValue !== null && f.defaultValue !== '') {
-        handleLocalChange(f.key, f.defaultValue, true);
-      }
-    });
-  };
-
-  const handleSavePreset = async () => {
-    if (!savePresetName.trim()) return;
-    const fields = PRESET_VISUAL_KEYS
-      .map(k => ({ key: k, type: ['stroke', 'fill', 'textColor'].includes(k) ? 'color' : 'number', defaultValue: gv(k) }))
-      .filter(f => f.defaultValue !== undefined && f.defaultValue !== '__varies__' && f.defaultValue !== null);
+  const handleSaveToToolChest = useCallback(async () => {
+    const name = chestNameInput.trim();
+    const m = selectedMarkups?.[0];
+    if (!name || !m) return;
+    setChestSaving(true);
     try {
-      const res = await apiFetch<any>('/api/presets', { method: 'POST', body: JSON.stringify({ name: savePresetName.trim(), fields }) });
-      if (res?.data) setPresets(prev => [res.data, ...prev]);
-      setSavePresetName('');
-      setIsSavingPreset(false);
-    } catch (err) { console.error(err); }
-  };
+      const props = m.properties || {};
+      const fields: any[] = [
+        { key: '__markupType__', type: 'text', defaultValue: m.type },
+        ...TOOL_CHEST_STYLE_KEYS
+          .filter(k => props[k] !== undefined && props[k] !== null && props[k] !== '')
+          .map(k => ({ key: k, type: typeof props[k] === 'number' ? 'number' : 'text', defaultValue: String(props[k]) })),
+      ];
+      await apiFetch('/api/presets', { method: 'POST', body: JSON.stringify({ name, fields, markupType: m.type }) });
+      setChestNameOpen(false);
+      setChestNameInput('');
+      toast.success(`"${name}" saved to Tool Chest`);
+      onPresetSaved?.();
+    } catch (e: any) {
+      toast.error('Failed to save to Tool Chest');
+      console.error('Failed to save preset:', e);
+    } finally {
+      setChestSaving(false);
+    }
+  }, [chestNameInput, selectedMarkups, onPresetSaved]);
 
   if (!open || (selectedMarkups || []).length === 0) return null;
 
@@ -270,7 +313,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
   const hasFillOpacity = hasFill;
   const hasLineStyle = !['pen', 'highlighter', 'text'].includes(markupType || '') || isMulti;
   const hasStrokeWidth = !['text'].includes(markupType || '') || isMulti || (markupType === 'text');
-  const hasFontSize = ['text', 'callout'].includes(markupType || '') || isMulti;
+  const hasFontSize = ['text', 'callout', 'stickyNote'].includes(markupType || '') || isMulti;
   const hasTextColor = ['text', 'callout'].includes(markupType || '') || isMulti;
   const isTextType = markupType === 'text' && !isMulti;
 
@@ -288,7 +331,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
       zIndex: 1200, overflow: 'hidden'
     }}>
       <Box sx={{ px: 1.5, py: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: 1, borderColor: 'divider' }}>
-        <Typography variant="subtitle2" fontWeight={700}>{isMulti ? `${selectedMarkups.length} ${t('selected', 'Selected')}` : (markup?.properties?.subject || markup?.type || t('properties', 'Properties'))}</Typography>
+        <Typography variant="subtitle2" fontWeight={700}>{isMulti ? `${selectedMarkups.length} ${t('selected', 'Selected')}` : (markup?.properties?.subject || ({ rect: 'Rectangle', circle: 'Circle', ellipse: 'Ellipse', triangle: 'Triangle', diamond: 'Diamond', hexagon: 'Hexagon', star: 'Star', line: 'Line', arrow: 'Arrow', measure: 'Measure', polyline: 'Polyline', text: 'Text', pen: 'Pen', highlighter: 'Highlighter', cloud: 'Cloud', callout: 'Callout', image: 'Image', reviewStamp: 'Review Stamp', electricalBox: 'Junction Box', stub: 'Stub Up', panel: 'Panel', wireTag: 'Wire Tag', routeTemplate: 'Route Template', route: 'Route' } as Record<string, string>)[markup?.type] || markup?.type || t('properties', 'Properties'))}</Typography>
         <IconButton size="small" onClick={onClose} sx={{ p: 0.5 }}><CloseIcon sx={{ fontSize: 16 }} /></IconButton>
       </Box>
       {!canEdit && (
@@ -307,9 +350,38 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
               <Tooltip title={t('bringToFront', 'Bring to Front')}><IconButton size="small" onClick={() => onAction('front', markup!.id)} sx={{ p: 0.5 }}><FlipToFrontIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
               <Tooltip title={t('sendToBack', 'Send to Back')}><IconButton size="small" onClick={() => onAction('back', markup!.id)} sx={{ p: 0.5 }}><FlipToBackIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
               <Tooltip title={markup?.properties?.locked ? t('unlock', 'Unlock') : t('lock', 'Lock')}><IconButton size="small" onClick={() => onAction(markup!.properties?.locked ? 'unlock' : 'lock', markup!.id)} sx={{ p: 0.5, color: markup?.properties?.locked ? gold : 'inherit' }}>{markup?.properties?.locked ? <LockIcon sx={{ fontSize: 16 }} /> : <LockOpenIcon sx={{ fontSize: 16 }} />}</IconButton></Tooltip>
+              {markup?.type === 'reviewStamp' && (
+              <Tooltip title={markup?.properties?.pulse ? 'Disable pulse' : 'Enable pulse animation'}><IconButton size="small" onClick={() => onUpdateProperties(markup!.id, { properties: { ...markup!.properties, pulse: !markup?.properties?.pulse } })} sx={{ p: 0.5, color: markup?.properties?.pulse ? '#e91e63' : 'inherit' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/>{markup?.properties?.pulse && <circle cx="12" cy="12" r="4" />}</svg>
+              </IconButton></Tooltip>
+              )}
+              {/* Save to Tool Chest — style preset */}
+              {markup && SIMPLE_PRESET_TYPES.has(markup.type) && (
+                <Tooltip title="Save style to Tool Chest">
+                  <IconButton size="small" onClick={() => { setChestNameInput(markup.properties?.subject || ''); setChestNameOpen(v => !v); }} sx={{ p: 0.5, color: chestNameOpen ? gold : 'inherit' }}>
+                    <ConstructionIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
             </Box>
           )}
         </Box>
+        {/* Inline preset name input */}
+        {chestNameOpen && isSingle && markup && SIMPLE_PRESET_TYPES.has(markup.type) && (
+          <Box sx={{ px: 1.5, pb: 1, display: 'flex', gap: 0.75, alignItems: 'center' }}>
+            <InputBase
+              value={chestNameInput}
+              onChange={e => setChestNameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSaveToToolChest(); if (e.key === 'Escape') setChestNameOpen(false); }}
+              placeholder="Preset name..."
+              autoFocus
+              sx={{ flex: 1, fontSize: '0.78rem', px: 1, py: 0.4, borderRadius: '6px', border: `1px solid ${alpha(gold, 0.4)}`, bgcolor: 'transparent' }}
+            />
+            <IconButton size="small" disabled={!chestNameInput.trim() || chestSaving} onClick={handleSaveToToolChest} sx={{ p: 0.5, color: gold }}>
+              {chestSaving ? <CircularProgress size={14} /> : <CheckIcon sx={{ fontSize: 14 }} />}
+            </IconButton>
+          </Box>
+        )}
 
         {/* Creator / Updater info */}
         {isSingle && markup && (
@@ -318,7 +390,7 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
               <Box display="flex" alignItems="center" gap={0.75}>
                 <PersonIcon sx={{ fontSize: 12, color: 'text.secondary', flexShrink: 0 }} />
                 <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', lineHeight: 1.2 }}>
-                  {t('createdBy', 'Created by')} <strong style={{ color: 'inherit' }}>{markup.author?.name || markup.author?.email || '—'}</strong>
+                  {t('createdBy', 'Created by')} <strong style={{ color: 'inherit' }}>{markup.properties?.bluebeamAuthor as string || markup.author?.name || markup.author?.email || '—'}</strong>
                   {markup.createdAt && <> · {dayjs(markup.createdAt).format('MM/DD/YY HH:mm')}</>}
                 </Typography>
               </Box>
@@ -350,8 +422,8 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
           </Box>
         )}
         <Divider />
-        {/* Polyline length display + show/hide toggle */}
-        {markupType === 'polyline' && (
+        {/* Polyline/route length display, label + show/hide toggles */}
+        {['polyline', 'routeTemplate', 'route'].includes(markupType) && (
           <Box sx={{ px: 1.5, py: 1 }}>
             {isSingle && markup?.properties?.pathLength != null && (
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
@@ -375,6 +447,39 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
               }
               label={<Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>Show length on canvas</Typography>}
               sx={{ ml: 0 }}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={gv('showLabel') !== false}
+                  disabled={!canEdit}
+                  onChange={e => handleLocalChange('showLabel', e.target.checked, true)}
+                  sx={{ py: 0, color: gold, '&.Mui-checked': { color: gold } }}
+                />
+              }
+              label={<Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>Show label on canvas</Typography>}
+              sx={{ ml: 0, mb: 1 }}
+            />
+            <Box mb={1.5} display="flex" alignItems="center" gap={1}>
+              <Typography sx={labelSx} mb={0} minWidth={50}>Label</Typography>
+              <InputBase fullWidth value={gv('label') || gv('redlineLabel') || ''} placeholder="e.g. 3/4&quot; EMT"
+                onChange={e => handleLocalChange('label', e.target.value)}
+                onBlur={e => savePropertyImmediate('label', (e.target as HTMLInputElement).value)}
+                disabled={!canEdit}
+                sx={{ ...inputSx, flex: 1, px: 1 }} />
+            </Box>
+          </Box>
+        )}
+        {['polyline', 'routeTemplate', 'route'].includes(markupType) && gv('conduitSize') && (
+          <Box sx={{ px: 1.5, py: 1 }}>
+            <Typography sx={labelSx} mb={0.5}>Label</Typography>
+            <InputBase
+              value={gv('redlineLabel') || ''}
+              onChange={e => handleLocalChange('redlineLabel', e.target.value)}
+              onBlur={e => savePropertyImmediate('redlineLabel', e.target.value)}
+              sx={{ ...inputSx, px: 1 }}
+              placeholder='e.g. 2"'
             />
           </Box>
         )}
@@ -465,6 +570,10 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
           )}
           {hasFillOpacity && !isTextType && <PropertySlider label={t('opacity', 'Opacity')} value={(gv('fillOpacity') ?? 1) * 100} onChange={(v: number) => handleLocalChange('fillOpacity', v / 100)} unit="%" />}
           {hasStrokeWidth && !isTextType && <PropertySlider label={t('strokeWidth', 'Width')} value={gv('strokeWidth') ?? 2} onChange={(v: number) => handleLocalChange('strokeWidth', v)} min={1} max={50} unit="px" />}
+          {/* Cloud Arc Size */}
+          {markupType === 'cloud' && !isMulti && (
+            <PropertySlider label="Arc Size" value={gv('cloudArcSize') ?? 20} onChange={(v: number) => handleLocalChange('cloudArcSize', v)} min={8} max={60} step={2} unit="px" />
+          )}
           {hasLineStyle && (
             <Box mb={1}>
               <Typography sx={labelSx}>{t('lineStyle', 'Line Style')}</Typography>
@@ -505,6 +614,191 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
             </Box>
           )}
           {hasFontSize && <PropertySlider label={t('fontSize', 'Font Size')} value={gv('fontSize') ?? 14} onChange={(v: number) => handleLocalChange('fontSize', v)} min={1} max={1000} unit="px" />}
+          {/* Electrical / Review Stamp types: full customization */}
+          {['electricalBox', 'stub', 'panel', 'wireTag', 'reviewStamp'].includes(markupType) && !isMulti && (
+            <>
+              {/* Label / Text */}
+              <Box mb={1.5} sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
+                <Typography sx={labelSx} mb={0.5}>Label</Typography>
+                <textarea
+                  value={gv('text') || ''}
+                  onChange={e => handleLocalChange('text', e.target.value)}
+                  onBlur={e => savePropertyImmediate('text', e.target.value)}
+                  rows={1}
+                  placeholder="Enter label..."
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    padding: '6px 8px', borderRadius: '4px', resize: 'vertical',
+                    border: `1px solid rgba(128,128,128,0.3)`,
+                    background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                    color: 'inherit', fontSize: '0.82rem', fontFamily: 'inherit', lineHeight: 1.4,
+                    outline: 'none',
+                  }}
+                />
+              </Box>
+              {/* Text Color */}
+              <Box mb={1.5} display="flex" alignItems="center" gap={1}>
+                <Typography sx={labelSx} mb={0} minWidth={80}>Text Color</Typography>
+                <Box sx={{ position: 'relative', width: 24, height: 24 }}>
+                  <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: gv('textColor') || gv('stroke') || '#000', border: '2px solid', borderColor: 'divider', cursor: 'pointer' }} />
+                  <input type="color" value={gv('textColor') || gv('stroke') || '#000000'}
+                    onChange={e => handleLocalChange('textColor', e.target.value)}
+                    onBlur={e => savePropertyImmediate('textColor', e.target.value)}
+                    style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
+                </Box>
+              </Box>
+              {/* Text Size */}
+              <Box mb={1.5} display="flex" alignItems="center" gap={1}>
+                <Typography sx={labelSx} mb={0} minWidth={80}>Text Size</Typography>
+                {(() => {
+                  const raw = gv('fontSize');
+                  const defaultFontSize = (() => {
+                    const w = markup?.coordinates?.width || 0.03;
+                    const h = markup?.coordinates?.height || 0.03;
+                    const minDim = Math.min(w, h) * 1000;
+                    return Math.round(minDim * 0.5);
+                  })();
+                  const displayVal = (raw !== undefined && raw !== null && raw !== 0) ? raw : defaultFontSize;
+                  return (
+                    <InputBase
+                      value={displayVal}
+                      onChange={e => handleLocalChange('fontSize', parseFloat(e.target.value) || 0)}
+                      onBlur={e => savePropertyImmediate('fontSize', parseFloat((e.target as HTMLInputElement).value) || 0)}
+                      type="number"
+                      sx={{ ...inputSx, width: 70, px: 1 }}
+                      placeholder={String(defaultFontSize)}
+                    />
+                  );
+                })()}
+              </Box>
+              {/* Fill Color */}
+              <Box mb={1.5} display="flex" alignItems="center" gap={1}>
+                <Typography sx={labelSx} mb={0} minWidth={80}>Fill Color</Typography>
+                {(() => {
+                  const rawFill = gv('fill');
+                  const defaultFill = (() => {
+                    if (markupType === 'reviewStamp') {
+                      return markup?.properties?.stampFill !== false ? (gv('stroke') || '#4caf50') : 'transparent';
+                    }
+                    return 'rgba(255,255,255,0.85)';
+                  })();
+                  const displayFill = (rawFill !== undefined && rawFill !== null) ? rawFill : defaultFill;
+                  const colorInputVal = (!displayFill || displayFill === 'transparent' || displayFill.startsWith('rgba')) ? '#ffffff' : displayFill;
+                  return (
+                    <>
+                      <Box sx={{ position: 'relative', width: 24, height: 24 }}>
+                        <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: displayFill, border: '2px solid', borderColor: 'divider', cursor: 'pointer' }} />
+                        <input type="color" value={colorInputVal}
+                          onChange={e => handleLocalChange('fill', e.target.value)}
+                          onBlur={e => savePropertyImmediate('fill', e.target.value)}
+                          style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
+                      </Box>
+                      <Typography
+                        onClick={() => { handleLocalChange('fill', 'transparent'); savePropertyImmediate('fill', 'transparent'); }}
+                        sx={{ fontSize: '0.7rem', color: 'primary.main', cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }}>
+                        None
+                      </Typography>
+                    </>
+                  );
+                })()}
+              </Box>
+              {/* Fill Opacity */}
+              <Box mb={1.5} display="flex" alignItems="center" gap={1}>
+                <Typography sx={labelSx} mb={0} minWidth={80}>Fill Opacity</Typography>
+                {(() => {
+                  const rawOpacity = gv('fillOpacity');
+                  const opacityVal = (rawOpacity !== undefined && rawOpacity !== null) ? rawOpacity as number : 1;
+                  return (
+                    <>
+                      <Slider
+                        size="small"
+                        value={Math.round(opacityVal * 100)}
+                        onChange={(_, v) => handleLocalChange('fillOpacity', (v as number) / 100)}
+                        onChangeCommitted={(_, v) => savePropertyImmediate('fillOpacity', (v as number) / 100)}
+                        min={0} max={100} step={5}
+                        sx={{ flex: 1, color: 'primary.main' }}
+                      />
+                      <Typography sx={{ fontSize: '0.72rem', minWidth: 30 }}>{Math.round(opacityVal * 100)}%</Typography>
+                    </>
+                  );
+                })()}
+              </Box>
+              {/* Corner Radius removed */}
+              {/* Shape (reviewStamp only) */}
+              {markupType === 'reviewStamp' && (
+                <Box mb={1.5}>
+                  <Typography sx={labelSx} mb={0.5}>Shape</Typography>
+                  <Select size="small" fullWidth
+                    value={gv('stampShape') || 'rounded'}
+                    onChange={e => { handleLocalChange('stampShape', e.target.value); savePropertyImmediate('stampShape', e.target.value); }}
+                    sx={inputSx}>
+                    <MenuItem value="rounded">Rounded Rectangle</MenuItem>
+                    <MenuItem value="rect">Rectangle</MenuItem>
+                    <MenuItem value="circle">Circle</MenuItem>
+                    <MenuItem value="diamond">Diamond</MenuItem>
+                    <MenuItem value="triangle">Triangle</MenuItem>
+                    <MenuItem value="cloud">Cloud</MenuItem>
+                  </Select>
+                </Box>
+              )}
+            </>
+          )}
+          {/* Panel-specific: editable width/height */}
+          {markupType === 'panel' && !isMulti && selectedMarkups.length === 1 && (
+            <Box mb={2} sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
+              <Typography sx={labelSx} mb={0.5}>Panel Size</Typography>
+              <Box display="flex" gap={1}>
+                <Box flex={1}>
+                  <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', mb: 0.3 }}>Width</Typography>
+                  <input
+                    type="number"
+                    step="0.005"
+                    min="0.01"
+                    max="1"
+                    value={Math.round((localOverrides._panelWidth ?? selectedMarkups[0]?.coordinates?.width ?? 0.05) * 100) / 100}
+                    onChange={e => {
+                      const val = parseFloat(e.target.value) || 0.05;
+                      setLocalOverrides(prev => ({ ...prev, _panelWidth: val }));
+                      const m = selectedMarkups[0];
+                      if (m) onUpdateProperties(m.id, { coordinates: { ...m.coordinates, width: val }, properties: m.properties });
+                    }}
+                    style={{
+                      width: '100%', boxSizing: 'border-box',
+                      padding: '5px 8px', borderRadius: '4px',
+                      border: `1px solid rgba(128,128,128,0.3)`,
+                      background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                      color: 'inherit', fontSize: '0.82rem', fontFamily: 'inherit',
+                      outline: 'none',
+                    }}
+                  />
+                </Box>
+                <Box flex={1}>
+                  <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', mb: 0.3 }}>Height</Typography>
+                  <input
+                    type="number"
+                    step="0.005"
+                    min="0.01"
+                    max="1"
+                    value={Math.round((localOverrides._panelHeight ?? selectedMarkups[0]?.coordinates?.height ?? 0.05) * 100) / 100}
+                    onChange={e => {
+                      const val = parseFloat(e.target.value) || 0.05;
+                      setLocalOverrides(prev => ({ ...prev, _panelHeight: val }));
+                      const m = selectedMarkups[0];
+                      if (m) onUpdateProperties(m.id, { coordinates: { ...m.coordinates, height: val }, properties: m.properties });
+                    }}
+                    style={{
+                      width: '100%', boxSizing: 'border-box',
+                      padding: '5px 8px', borderRadius: '4px',
+                      border: `1px solid rgba(128,128,128,0.3)`,
+                      background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                      color: 'inherit', fontSize: '0.82rem', fontFamily: 'inherit',
+                      outline: 'none',
+                    }}
+                  />
+                </Box>
+              </Box>
+            </Box>
+          )}
           {/* Callout-specific: inline text editing */}
           {markupType === 'callout' && !isMulti && (
             <Box mb={2} sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
@@ -538,6 +832,110 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
                 <IconButton size="small" onClick={() => handleLocalChange('textBoxFill', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.70rem', fontWeight: 700 }}>NONE</Typography></IconButton>
               </Box>
             </Box>
+          )}
+          {/* Text styling: font, bold/italic, alignment — for callout, stickyNote, text */}
+          {(['callout', 'stickyNote', 'text'].includes(markupType || '') && !isMulti) && (
+            <>
+              {/* Sticky Note / Text: background color + text color */}
+              {(markupType === 'stickyNote' || markupType === 'text') && (
+                <Box mb={2} display="flex" gap={2} alignItems="center">
+                  <Box>
+                    <Typography sx={labelSx} mb={0.5}>Background</Typography>
+                    <Box sx={{ position: 'relative', width: 28, height: 28 }}>
+                      <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('fill'), markupType === 'stickyNote' ? '#FFEB3B' : 'transparent'), border: '1px solid #ccc' }} />
+                      <input type="color" value={isVaries(gv('fill')) ? '#9e9e9e' : (gv('fill') || (markupType === 'stickyNote' ? '#FFEB3B' : '#ffffff'))} onChange={e => handleLocalChange('fill', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
+                    </Box>
+                  </Box>
+                  <Box>
+                    <Typography sx={labelSx} mb={0.5}>Text Color</Typography>
+                    <Box sx={{ position: 'relative', width: 28, height: 28 }}>
+                      <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('textColor'), '#212121'), border: '1px solid #ccc' }} />
+                      <input type="color" value={isVaries(gv('textColor')) ? '#9e9e9e' : (gv('textColor') || '#212121')} onChange={e => handleLocalChange('textColor', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
+                    </Box>
+                  </Box>
+                </Box>
+              )}
+              {/* Font Family */}
+              <Box mb={2}>
+                <Typography sx={labelSx} mb={0.5}>Font</Typography>
+                <Select size="small" fullWidth
+                  value={gv('fontFamily') || 'Arial'}
+                  onChange={e => handleLocalChange('fontFamily', e.target.value as string, true)}
+                  sx={inputSx}>
+                  {['Arial', 'Helvetica', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana'].map(f => (
+                    <MenuItem key={f} value={f} sx={{ fontFamily: f }}>{f}</MenuItem>
+                  ))}
+                </Select>
+              </Box>
+              {/* Bold / Italic / Text Align */}
+              <Box mb={2} display="flex" gap={1} alignItems="center">
+                <Tooltip title="Bold">
+                  <IconButton size="small"
+                    onClick={() => handleLocalChange('fontWeight', gv('fontWeight') === 'bold' ? 'normal' : 'bold', true)}
+                    sx={{ p: 0.5, border: '1px solid', borderColor: gv('fontWeight') === 'bold' ? gold : 'divider', borderRadius: '4px', bgcolor: gv('fontWeight') === 'bold' ? alpha(gold, 0.12) : 'transparent' }}>
+                    <FormatBoldIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Italic">
+                  <IconButton size="small"
+                    onClick={() => handleLocalChange('fontStyle', gv('fontStyle') === 'italic' ? 'normal' : 'italic', true)}
+                    sx={{ p: 0.5, border: '1px solid', borderColor: gv('fontStyle') === 'italic' ? gold : 'divider', borderRadius: '4px', bgcolor: gv('fontStyle') === 'italic' ? alpha(gold, 0.12) : 'transparent' }}>
+                    <FormatItalicIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+                <Box sx={{ mx: 0.5, width: '1px', height: 20, bgcolor: 'divider' }} />
+                {(['left', 'center', 'right'] as const).map(align => (
+                  <Tooltip key={align} title={align.charAt(0).toUpperCase() + align.slice(1)}>
+                    <IconButton size="small"
+                      onClick={() => handleLocalChange('textAlign', align, true)}
+                      sx={{ p: 0.5, border: '1px solid', borderColor: (gv('textAlign') || 'left') === align ? gold : 'divider', borderRadius: '4px', bgcolor: (gv('textAlign') || 'left') === align ? alpha(gold, 0.12) : 'transparent' }}>
+                      {align === 'left' ? <FormatAlignLeftIcon sx={{ fontSize: 16 }} /> : align === 'center' ? <FormatAlignCenterIcon sx={{ fontSize: 16 }} /> : <FormatAlignRightIcon sx={{ fontSize: 16 }} />}
+                    </IconButton>
+                  </Tooltip>
+                ))}
+              </Box>
+              {/* Callout-only: Textbox border + Connector */}
+              {markupType === 'callout' && (
+                <>
+                  <Box mb={2}>
+                    <Typography sx={labelSx} mb={0.5}>Text Box Border</Typography>
+                    <Box display="flex" gap={1} alignItems="center">
+                      <Box sx={{ position: 'relative', width: 28, height: 28 }}>
+                        <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('textBoxStroke'), '#000000'), border: '1px solid #ccc' }} />
+                        <input type="color" value={isVaries(gv('textBoxStroke')) ? '#9e9e9e' : (gv('textBoxStroke') || '#000000')} onChange={e => handleLocalChange('textBoxStroke', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
+                      </Box>
+                      <IconButton size="small" onClick={() => handleLocalChange('textBoxStroke', 'transparent', true)} sx={{ p: 0.5 }}><Typography sx={{ fontSize: '0.70rem', fontWeight: 700 }}>NONE</Typography></IconButton>
+                    </Box>
+                  </Box>
+                  <Box mb={2}>
+                    <Typography sx={labelSx} mb={0.5}>Connector Style</Typography>
+                    <Select size="small" fullWidth
+                      value={gv('connectorStyle') || 'straight'}
+                      onChange={e => handleLocalChange('connectorStyle', e.target.value as string, true)}
+                      sx={inputSx}>
+                      <MenuItem value="straight">Straight</MenuItem>
+                      <MenuItem value="elbow">Elbow</MenuItem>
+                      <MenuItem value="curved">Curved</MenuItem>
+                    </Select>
+                  </Box>
+                </>
+              )}
+            </>
+          )}
+          {/* Measure-specific controls */}
+          {markupType === 'measure' && !isMulti && (
+            <>
+              <PropertySlider label="Label Size" value={gv('fontSize') ?? 14} onChange={(v: number) => handleLocalChange('fontSize', v)} min={8} max={36} unit="px" />
+              <Box mb={2}>
+                <Typography sx={labelSx} mb={0.5}>Label Color</Typography>
+                <Box sx={{ position: 'relative', width: 28, height: 28 }}>
+                  <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: getColorValue(gv('textColor'), '#000000'), border: '1px solid #ccc' }} />
+                  <input type="color" value={isVaries(gv('textColor')) ? '#9e9e9e' : (gv('textColor') || '#000000')} onChange={e => handleLocalChange('textColor', e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
+                </Box>
+              </Box>
+              <PropertySlider label="Tick Size" value={gv('tickSize') ?? 6} onChange={(v: number) => handleLocalChange('tickSize', v)} min={3} max={20} unit="px" />
+              <PropertySlider label="Extensions" value={gv('extensionSize') ?? 3} onChange={(v: number) => handleLocalChange('extensionSize', v)} min={0} max={15} unit="px" />
+            </>
           )}
           {/* Arrow-specific controls */}
           {markupType === 'arrow' && !isMulti && (
@@ -711,85 +1109,80 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
           </Tooltip>
         </Box>
         <Divider />
-        {/* Style Presets */}
-        <Box sx={{ ...sectionSx, pointerEvents: canEdit ? 'auto' : 'none' }}>
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.75}>
-            <Typography sx={labelSx}>{t('stylePresets', 'Style Presets')}</Typography>
-            {canEdit && !isSavingPreset && (
-              <Typography variant="caption" sx={{ cursor: 'pointer', fontWeight: 600, color: 'primary.main', fontSize: '0.70rem', '&:hover': { textDecoration: 'underline' } }} onClick={() => setIsSavingPreset(true)}>
-                + {t('saveStyle', 'Save current')}
-              </Typography>
-            )}
-            {canEdit && isSavingPreset && (
-              <Box display="flex" gap={0.5} alignItems="center">
-                <InputBase
-                  autoFocus
-                  value={savePresetName}
-                  onChange={e => setSavePresetName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleSavePreset(); if (e.key === 'Escape') { setIsSavingPreset(false); setSavePresetName(''); } }}
-                  placeholder="Preset name"
-                  sx={{ ...inputSx, px: 1, height: 24, fontSize: '0.76rem', width: 100 }}
-                />
-                <IconButton size="small" onClick={handleSavePreset} disabled={!savePresetName.trim()} sx={{ p: 0.25, color: gold }}><CheckIcon sx={{ fontSize: 13 }} /></IconButton>
-                <IconButton size="small" onClick={() => { setIsSavingPreset(false); setSavePresetName(''); }} sx={{ p: 0.25 }}><CloseIcon sx={{ fontSize: 13 }} /></IconButton>
-              </Box>
-            )}
-          </Box>
-          {presets.length === 0 ? (
-            <Typography sx={{ fontSize: '0.70rem', color: 'text.disabled', fontStyle: 'italic' }}>No presets yet</Typography>
-          ) : (
-            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-              {presets.map((p: any) => {
-                const strokeField = (p.fields || []).find((f: any) => f.key === 'stroke');
-                return (
-                  <Box key={p.id} sx={{ display: 'flex', alignItems: 'center', border: '1px solid', borderColor: 'divider', borderRadius: '10px', overflow: 'hidden', bgcolor: 'action.hover', '&:hover': canEdit ? { borderColor: alpha(gold, 0.5), bgcolor: alpha(gold, 0.08) } : {} }}>
-                    <Tooltip title={`Apply: ${p.name}`} placement="top">
-                      <Box
-                        onClick={() => applyPreset(p)}
-                        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.3, cursor: canEdit ? 'pointer' : 'default' }}
-                      >
-                        {strokeField && (
-                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: strokeField.defaultValue || gold, flexShrink: 0 }} />
-                        )}
-                        <Typography sx={{ fontSize: '0.70rem', fontWeight: 600, lineHeight: 1 }}>{p.name}</Typography>
-                      </Box>
-                    </Tooltip>
-                    {canEdit && (
-                      <Tooltip title="Delete preset" placement="top">
-                        <IconButton size="small" sx={{ p: 0.25, borderRadius: 0, color: 'text.disabled', '&:hover': { color: 'error.main', bgcolor: 'transparent' } }}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            await apiFetch(`/api/presets/${p.id}`, { method: 'DELETE' });
-                            setPresets(prev => prev.filter(x => x.id !== p.id));
-                          }}
-                        >
-                          <CloseIcon sx={{ fontSize: 11 }} />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </Box>
-                );
-              })}
-            </Box>
-          )}
-        </Box>
-        <Divider />
         <Box sx={sectionSx}>
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5} sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}><Typography sx={labelSx}>{t('customParameters', 'Custom Parameters')}</Typography>{loadingFields && <CircularProgress size={12} color="inherit" />}</Box>
+          {/* Project-level custom fields */}
           {customFields.filter(field => {
             const v = gv(field.key);
-            return typeof v !== 'object' || v === null; // skip thread/arrays/objects
+            return typeof v !== 'object' || v === null;
           }).map(field => (
             <Box key={field.id} mb={1.5} display="flex" alignItems="center" gap={1} width="100%" sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
               <Typography sx={{ ...labelSx, mb: 0, minWidth: 80, flexShrink: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{field.label || field.key}</Typography>
               <InputBase fullWidth value={gv(field.key) || ''} onChange={e => handleMentionInput(e, field.key)} sx={{ ...inputSx, flex: 1, px: 1 }} placeholder="" />
             </Box>
           ))}
+          {/* Per-markup custom properties (not in project fields or standard keys) */}
+          {(() => {
+            const STANDARD_KEYS = new Set([
+              'stroke', 'fill', 'fillOpacity', 'strokeWidth', 'lineStyle', 'fontSize', 'textColor',
+              'fontFamily', 'fontWeight', 'fontStyle', 'textAlign', 'text', 'comment', 'subject',
+              'status', 'locked', 'source', 'bluebeamAuthor', 'pdfAnnotId', 'arrowSize', 'arrowStyle',
+              'showLength', 'originalWidth', 'originalHeight', 'pathLength', 'opacity', 'strokeOpacity',
+              'createdAt', 'updatedAt', 'thread', 'isPastedOrDuplicated', 'allowedEditUserIds',
+              'allowedDeleteUserIds', 'imageData', 'borderColor', 'borderWidth', 'stampShape', 'stampFill',
+              'boxType', 'supportShape', 'stubDirection', 'redlineLabel', 'showLabel',
+              'textBoxFill', 'textBoxStroke', 'connectorStroke', 'connectorWidth', 'connectorStyle',
+              'cloudArcSize', 'cloudIntensity', 'borderEffect', 'tickSize', 'extensionSize', 'labelBg',
+              'labelTextColor', 'measureDict', 'lineEndStart', 'lineEndEnd',
+              'isDraft', '_draftNew', '_hasAppearanceStream', '_pdf_Subtype', '_pdf_Measure',
+              '_pdf_IT', '_pdf_LE', '_pdf_OC', '_pdf_BM', 'reviewStamp', 'sessionId',
+              'pulse', 'groupId', 'conduitSize', 'from', 'to', 'equipType', 'size', 'label',
+              'defaultText', 'category', 'borderRadius', 'labelFontSize', 'labelFontFamily',
+              'labelFontWeight', 'wireType', 'wireSize', 'circuitId', 'voltage',
+            ]);
+            const projectFieldKeys = new Set(customFields.map((f: any) => f.key));
+            const first = selectedMarkups[0];
+            if (!first?.properties) return null;
+            const perMarkupKeys = Object.keys(first.properties).filter(k =>
+              !STANDARD_KEYS.has(k) && !projectFieldKeys.has(k) && !k.startsWith('_pdf_') &&
+              typeof first.properties[k] !== 'object'
+            );
+            if (perMarkupKeys.length === 0) return null;
+            return perMarkupKeys.map(key => (
+              <Box key={key} mb={1.5} display="flex" alignItems="center" gap={1} width="100%" sx={{ pointerEvents: canEdit ? 'auto' : 'none' }}>
+                <Typography sx={{ ...labelSx, mb: 0, minWidth: 80, flexShrink: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', color: 'text.secondary' }}>{key}</Typography>
+                <InputBase fullWidth value={gv(key) || ''} onChange={e => handleMentionInput(e, key)} sx={{ ...inputSx, flex: 1, px: 1 }} placeholder="" />
+                <IconButton size="small" onClick={() => {
+                  selectedMarkups.forEach(m => {
+                    const { [key]: _, ...rest } = m.properties || {};
+                    // Pass _fullProperties to signal complete replacement (not merge)
+                    onUpdateProperties(m.id, { _fullProperties: rest });
+                  });
+                }} sx={{ p: 0.3, color: 'text.disabled', '&:hover': { color: 'error.main' } }}>
+                  <CloseIcon sx={{ fontSize: 13 }} />
+                </IconButton>
+              </Box>
+            ));
+          })()}
           <Box sx={{ mt: 1, pointerEvents: canEdit ? 'auto' : 'none' }}>
             {isAddingField ? (
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <InputBase autoFocus size="small" placeholder="Field name" value={newFieldName} onChange={e => setNewFieldName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleAddField(); }} sx={{ ...inputSx, flex: 1, px: 1 }} />
-                <IconButton size="small" onClick={() => setIsAddingField(false)}><CloseIcon sx={{ fontSize: 14 }} /></IconButton>
+              <Box>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <InputBase autoFocus size="small" placeholder="Field name" value={newFieldName}
+                    onChange={e => { setNewFieldName(e.target.value); setAddFieldError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddField(); if (e.key === 'Escape') { setIsAddingField(false); setAddFieldError(''); } }}
+                    sx={{ ...inputSx, flex: 1, px: 1 }} />
+                  <IconButton size="small" onClick={handleAddField} sx={{ p: 0.3, color: gold }}><CheckIcon sx={{ fontSize: 14 }} /></IconButton>
+                  <IconButton size="small" onClick={() => { setIsAddingField(false); setAddFieldError(''); }}><CloseIcon sx={{ fontSize: 14 }} /></IconButton>
+                </Box>
+                {addFieldError && (
+                  <Typography sx={{ fontSize: '0.68rem', color: 'error.main', mt: 0.5 }}>{addFieldError}</Typography>
+                )}
+                <FormControlLabel
+                  control={<Checkbox size="small" checked={addFieldForAll} onChange={e => setAddFieldForAll(e.target.checked)} sx={{ p: 0.3, color: gold, '&.Mui-checked': { color: gold } }} />}
+                  label={<Typography sx={{ fontSize: '0.70rem', fontWeight: 600 }}>Apply to all markups</Typography>}
+                  sx={{ mt: 0.5, ml: 0 }}
+                />
               </Box>
             ) : (
               <Typography variant="caption" color="primary" sx={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600, '&:hover': { textDecoration: 'underline' } }} onClick={() => setIsAddingField(true)}>+ {t('addParameter', 'Add Parameter')}</Typography>

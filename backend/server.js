@@ -310,9 +310,13 @@ app.use("/api/notifications", notificationRoutes);
 const oneDriveRoutes = require("./src/routes/oneDriveRoutes");
 const webhookRoutes = require("./src/routes/webhookRoutes");
 const revitRoutes = require("./src/routes/revitRoutes");
+const reviewRoutes = require("./src/routes/reviewRoutes");
+const markupHistoryRoutes = require("./src/routes/markupHistoryRoutes");
 app.use("/api/onedrive", oneDriveRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/revit", revitRoutes);
+app.use("/api", reviewRoutes);
+app.use("/api/documents/:documentId/markup-history", markupHistoryRoutes);
 
 // OneDrive background sync
 if (process.env.ONEDRIVE_SYNC_ENABLED !== 'false') {

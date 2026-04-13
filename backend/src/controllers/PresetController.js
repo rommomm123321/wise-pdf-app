@@ -1,18 +1,12 @@
 const prisma = require('../prismaClient');
 
 class PresetController {
-  // List presets for user's company
+  // List presets — user's own presets only
   static async getPresets(req, res) {
     try {
-      const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { companyId: true } });
-      
-      if (!user?.companyId) {
-        return res.json({ status: 'ok', data: [] });
-      }
-
       const presets = await prisma.markupPropertyPreset.findMany({
-        where: { companyId: user.companyId },
-        include: { createdBy: { select: { id: true, name: true } } },
+        where: { createdById: req.user.userId },
+        include: { createdBy: { select: { id: true, name: true, email: true } } },
         orderBy: { createdAt: 'desc' },
       });
       res.json({ status: 'ok', data: presets });
@@ -24,19 +18,33 @@ class PresetController {
   // Create preset
   static async createPreset(req, res) {
     try {
-      const { name, fields } = req.body;
+      const { name, fields, markupType } = req.body;
       if (!name || !fields || !Array.isArray(fields)) {
         return res.status(400).json({ error: 'name and fields[] are required' });
       }
 
-      const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { companyId: true } });
-      if (!user?.companyId) return res.status(400).json({ error: 'No company' });
+      const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { companyId: true, systemRole: true } });
+      let companyId = user?.companyId;
+      if (!companyId) {
+        if (user?.systemRole === 'GENERAL_ADMIN') {
+          const first = await prisma.company.findFirst({ select: { id: true } });
+          if (!first) return res.status(400).json({ error: 'No companies exist yet' });
+          companyId = first.id;
+        } else {
+          return res.status(400).json({ error: 'No company' });
+        }
+      }
+
+      // Store markupType inside fields JSON as a special entry to avoid schema migration
+      const storedFields = markupType
+        ? [{ key: '__markupType__', type: 'text', defaultValue: markupType }, ...fields]
+        : fields;
 
       const preset = await prisma.markupPropertyPreset.create({
         data: {
           name,
-          fields,
-          companyId: user.companyId,
+          fields: storedFields,
+          companyId: companyId,
           createdById: req.user.userId,
         },
         include: { createdBy: { select: { id: true, name: true } } },
@@ -70,10 +78,15 @@ class PresetController {
     }
   }
 
-  // Delete preset
+  // Delete preset — only own presets (or admin)
   static async deletePreset(req, res) {
     try {
       const { id } = req.params;
+      const preset = await prisma.markupPropertyPreset.findUnique({ where: { id } });
+      if (!preset) return res.status(404).json({ error: 'Preset not found' });
+      if (preset.createdById !== req.user.userId && req.user.role !== 'GENERAL_ADMIN') {
+        return res.status(403).json({ error: 'Can only delete your own presets' });
+      }
       await prisma.markupPropertyPreset.delete({ where: { id } });
       res.json({ status: 'ok' });
     } catch (error) {

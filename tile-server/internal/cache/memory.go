@@ -44,19 +44,33 @@ func NewMemoryCache(maxItems int) *MemoryCache {
 }
 
 // Get retrieves a tile from cache. Returns nil if not found.
+// Uses RLock first for existence check, upgrades to write lock only for LRU promotion.
+// This allows concurrent reads for cache hits without blocking each other on the map lookup.
 func (c *MemoryCache) Get(key string) []byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// Fast path: read-only check
+	c.mu.RLock()
 	el, ok := c.items[key]
-	if ok {
-		c.hits++
-		c.order.MoveToBack(el) // O(1)
-		return el.Value.(*cacheEntry).data
+	if !ok {
+		c.mu.RUnlock()
+		// Upgrade to write lock only to increment misses counter
+		c.mu.Lock()
+		c.misses++
+		c.mu.Unlock()
+		return nil
 	}
+	data := el.Value.(*cacheEntry).data
+	c.mu.RUnlock()
 
-	c.misses++
-	return nil
+	// Upgrade to write lock for LRU promotion + hit counter
+	c.mu.Lock()
+	// Re-check element is still present (could have been evicted between RUnlock and Lock)
+	if el2, stillOk := c.items[key]; stillOk {
+		c.order.MoveToBack(el2) // O(1)
+		c.hits++
+	}
+	c.mu.Unlock()
+
+	return data
 }
 
 // Set stores a tile in cache with LRU eviction.

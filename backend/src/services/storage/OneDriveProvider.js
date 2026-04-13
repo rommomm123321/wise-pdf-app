@@ -222,8 +222,24 @@ class OneDriveProvider extends IStorageProvider {
   }
 
   async downloadFile(itemId) {
-    const { accessToken, driveId } = await this._getTokens();
-    return this._graphRequest('GET', `/drives/${driveId}/items/${itemId}/content`, null, accessToken, driveId);
+    // Retry once on 401 — redirect tempauth can expire if access token was just refreshed
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { accessToken, driveId } = await this._getTokens();
+        return await this._graphRequest('GET', `/drives/${driveId}/items/${itemId}/content`, null, accessToken, driveId);
+      } catch (err) {
+        if (attempt === 0 && err.message && err.message.includes('401')) {
+          console.log('[OneDrive] 401 on download, forcing token refresh and retry...');
+          // Force token refresh by clearing cached access token
+          await prisma.company.update({
+            where: { id: this.companyId },
+            data: { oneDriveAccessToken: null, oneDriveTokenExpiry: null },
+          });
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   async deleteFile(itemId) {
@@ -296,21 +312,35 @@ class OneDriveProvider extends IStorageProvider {
   }
 
   async getDelta(deltaLink) {
-    const { accessToken, driveId } = await this._getTokens();
-    const company = await prisma.company.findUnique({ where: { id: this.companyId } });
-    
-    // If no delta link, start from the company root folder
-    let url = deltaLink;
-    if (!url) {
-      const rootId = company.oneDriveRootItemId || 'root';
-      url = `/drives/${driveId}/items/${rootId}/delta`;
-    }
+    // Retry once on 401 — token may have expired between syncs
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { accessToken, driveId } = await this._getTokens();
+        const company = await prisma.company.findUnique({ where: { id: this.companyId } });
 
-    const result = await this._graphRequest('GET', url, null, accessToken, driveId);
-    return {
-      changes: result.value || [],
-      nextDeltaLink: result['@odata.deltaLink'] || result['@odata.nextLink'] || null,
-    };
+        let url = deltaLink;
+        if (!url) {
+          const rootId = company.oneDriveRootItemId || 'root';
+          url = `/drives/${driveId}/items/${rootId}/delta`;
+        }
+
+        const result = await this._graphRequest('GET', url, null, accessToken, driveId);
+        return {
+          changes: result.value || [],
+          nextDeltaLink: result['@odata.deltaLink'] || result['@odata.nextLink'] || null,
+        };
+      } catch (err) {
+        if (attempt === 0 && err.message && (err.message.includes('401') || err.message.includes('InvalidAuthenticationToken'))) {
+          console.log('[OneDrive] 401 on getDelta, forcing token refresh and retry...');
+          await prisma.company.update({
+            where: { id: this.companyId },
+            data: { oneDriveAccessToken: null, oneDriveTokenExpiry: null },
+          });
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   // Static method: exchange auth code for tokens (used in OAuth callback)

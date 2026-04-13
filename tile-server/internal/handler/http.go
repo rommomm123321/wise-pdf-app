@@ -35,8 +35,8 @@ func NewTileHandler(pool *pool.PDFPool, renderer *renderer.TileRenderer, c cache
 	if semSize < 4 {
 		semSize = 4
 	}
-	if semSize > 16 {
-		semSize = 16
+	if semSize > 32 {
+		semSize = 32
 	}
 	return &TileHandler{
 		pool:      pool,

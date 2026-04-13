@@ -55,6 +55,8 @@ interface PdfSidebarProps {
   onSearchKeywordChange?: (keyword: string) => void;
   searchScope?: 'document' | 'page';
   onSearchScopeChange?: (scope: 'document' | 'page') => void;
+  searchMode?: 'exact' | 'contains' | 'fuzzy';
+  onSearchModeChange?: (mode: 'exact' | 'contains' | 'fuzzy') => void;
   activeSearchResultIndex?: number | null;
   onSearchResultSelect?: (index: number) => void;
   onHighlightAll?: (color: string) => void;
@@ -221,6 +223,7 @@ const PdfSidebar = memo(function PdfSidebar({
   searchResults = [], isSearching = false, searchProgress = 0, onSearch, onResetSearch, jumpToPage,
   searchKeyword: externalSearchKeyword, onSearchKeywordChange,
   searchScope = 'document', onSearchScopeChange,
+  searchMode = 'contains', onSearchModeChange,
   activeSearchResultIndex, onSearchResultSelect, onHighlightAll,
   numPages = 0, bookmarks = [], onJumpToBookmark, documentId, token, pdfData,
   currentPage = 1, pageLabels = [],
@@ -370,17 +373,24 @@ const PdfSidebar = memo(function PdfSidebar({
             <Typography sx={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'text.secondary', mb: 1 }}>
               {t('markupLayers', 'Markup Layers')}
             </Typography>
-            <List>
-              {Array.from(new Set((markups || []).map(m => m.type))).map((type: any) => {
-                const isHidden = hiddenLayers.includes(type);
-                return (
-                  <ListItemButton key={type} onClick={() => onToggleLayer?.(type)} sx={{ borderRadius: 1, mb: 0.5, py: 0.5, bgcolor: isHidden ? 'transparent' : alpha(gold, 0.08), justifyContent: 'space-between', '&:hover': { bgcolor: isHidden ? theme.palette.action.hover : alpha(gold, 0.15) } }}>
-                    <ListItemText primary={type} primaryTypographyProps={{ fontSize: '0.85rem', color: isHidden ? 'text.secondary' : 'text.primary', fontWeight: isHidden ? 400 : 600 }} />
-                    <ListItemIcon sx={{ minWidth: 0 }}>{isHidden ? <VisibilityOffIcon sx={{ fontSize: 18, opacity: 0.5 }} /> : <VisibilityIcon sx={{ fontSize: 18, color: gold }} />}</ListItemIcon>
-                  </ListItemButton>
-                );
-              })}
-            </List>
+            {(() => {
+              const markupTypes = Array.from(new Set((markups || []).map(m => m.type)));
+              return markupTypes.length === 0 ? (
+                <Typography sx={{ p: 2, color: 'text.disabled', fontSize: '0.8rem', textAlign: 'center' }}>No markup layers</Typography>
+              ) : (
+                <List>
+                  {markupTypes.map((type: any) => {
+                    const isHidden = hiddenLayers.includes(type);
+                    return (
+                      <ListItemButton key={type} onClick={() => onToggleLayer?.(type)} sx={{ borderRadius: 1, mb: 0.5, py: 0.5, bgcolor: isHidden ? 'transparent' : alpha(gold, 0.08), justifyContent: 'space-between', '&:hover': { bgcolor: isHidden ? theme.palette.action.hover : alpha(gold, 0.15) } }}>
+                        <ListItemText primary={type} primaryTypographyProps={{ fontSize: '0.85rem', color: isHidden ? 'text.secondary' : 'text.primary', fontWeight: isHidden ? 400 : 600 }} />
+                        <ListItemIcon sx={{ minWidth: 0 }}>{isHidden ? <VisibilityOffIcon sx={{ fontSize: 18, opacity: 0.5 }} /> : <VisibilityIcon sx={{ fontSize: 18, color: gold }} />}</ListItemIcon>
+                      </ListItemButton>
+                    );
+                  })}
+                </List>
+              );
+            })()}
           </Box>
         )}
 
@@ -440,6 +450,20 @@ const PdfSidebar = memo(function PdfSidebar({
                 <FormControlLabel value="document" control={<Radio size="small" sx={{ color: gold, '&.Mui-checked': { color: gold }, p: 0.5 }} />} label={<Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 700 }}>{t('allPages', 'ALL SHEETS')}</Typography>} />
                 <FormControlLabel value="page" control={<Radio size="small" sx={{ color: gold, '&.Mui-checked': { color: gold }, p: 0.5 }} />} label={<Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 700 }}>{t('currentPage', 'CURRENT')}</Typography>} />
               </RadioGroup>
+              <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center' }}>
+                {(['contains', 'exact', 'fuzzy'] as const).map(mode => (
+                  <Box key={mode} onClick={() => onSearchModeChange?.(mode)} sx={{
+                    px: 1.2, py: 0.3, borderRadius: '6px', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 700,
+                    textTransform: 'uppercase', letterSpacing: 0.3, transition: 'all 0.15s',
+                    bgcolor: searchMode === mode ? alpha(gold, 0.15) : 'transparent',
+                    color: searchMode === mode ? gold : 'text.secondary',
+                    border: `1px solid ${searchMode === mode ? alpha(gold, 0.4) : 'transparent'}`,
+                    '&:hover': { bgcolor: alpha(gold, 0.08) },
+                  }}>
+                    {mode === 'contains' ? 'Contains' : mode === 'exact' ? 'Exact' : 'Fuzzy'}
+                  </Box>
+                ))}
+              </Box>
               <Box sx={{ position: 'relative', display: 'flex', gap: 1 }}>
                 <input placeholder={t('searchDocument', 'Search document...')} value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onSearch?.(searchKeyword); }} style={{ ...inputSx, paddingRight: '30px' }} />
                 {searchKeyword && <IconButton size="small" onClick={onResetSearch} sx={{ position: 'absolute', right: 40, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }}><ClearIcon sx={{ fontSize: 14 }} /></IconButton>}
@@ -473,21 +497,21 @@ const PdfSidebar = memo(function PdfSidebar({
                     HIGHLIGHT
                   </Box>
                 </Box>
-                {/* Row 2: group + filter + sort — MUI Selects matching Markups style */}
-                <Box sx={{ display: 'flex', gap: 0.75 }}>
+                {/* Row 2-4: group + filter + sort — stacked vertically */}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                   <Select size="small" value={searchGroupBy} onChange={e => setSearchGroupBy(e.target.value as any)}
-                    sx={{ ...searchSelectSx, flex: 1, minWidth: 0 }} MenuProps={searchMenuProps}>
+                    sx={{ ...searchSelectSx, minWidth: 0 }} MenuProps={searchMenuProps}>
                     <MenuItem value="none">No grouping</MenuItem>
                     <MenuItem value="page">By page</MenuItem>
                   </Select>
                   <Select size="small" value={searchFilterType} onChange={e => setSearchFilterType(e.target.value as any)}
-                    sx={{ ...searchSelectSx, flex: 1, minWidth: 0 }} MenuProps={searchMenuProps}>
+                    sx={{ ...searchSelectSx, minWidth: 0 }} MenuProps={searchMenuProps}>
                     <MenuItem value="all">All types</MenuItem>
                     <MenuItem value="text">Text only</MenuItem>
                     <MenuItem value="markup">Markups</MenuItem>
                   </Select>
                   <Select size="small" value={searchSortBy} onChange={e => setSearchSortBy(e.target.value as any)}
-                    sx={{ ...searchSelectSx, flex: 1, minWidth: 0 }} MenuProps={searchMenuProps}>
+                    sx={{ ...searchSelectSx, minWidth: 0 }} MenuProps={searchMenuProps}>
                     <MenuItem value="found">Found order</MenuItem>
                     <MenuItem value="page">By page</MenuItem>
                   </Select>

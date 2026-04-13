@@ -88,9 +88,9 @@ class DocumentController {
       if (!folder) return res.status(404).json({ error: 'Folder not found' });
       const companyId = folder.project.companyId;
 
-      // Find existing doc with same name in this folder to increment version
+      // Find existing doc with same name in this folder to increment version (exclude soft-deleted)
       const existingDoc = await prisma.document.findFirst({
-        where: { folderId, name: file.originalname, isLatest: true },
+        where: { folderId, name: file.originalname, isLatest: true, isDeleted: false },
       });
 
       const version = existingDoc ? existingDoc.version + 1 : 1;

@@ -22,12 +22,12 @@ services:
 
   db:
     image: postgres:15-alpine
-    container_name: redlines_db
+    container_name: pdf_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_password}
-      POSTGRES_DB: ${POSTGRES_DB:-redlines_db}
+      POSTGRES_DB: ${POSTGRES_DB:-pdf_db}
     ports:
       - "5433:5432"
     volumes:

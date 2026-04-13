@@ -14,12 +14,13 @@ import (
 	"github.com/gen2brain/go-fitz"
 )
 
-// fitzHandleCount: 2 handles per document (was 4).
-// Each handle holds the entire PDF in MuPDF's heap — halving this halves per-doc memory.
-const fitzHandleCount = 2
+// fitzHandleCount: 4 handles per document — allows 4 concurrent page renders per PDF.
+// Each handle holds the entire PDF in MuPDF's heap.
+const fitzHandleCount = 4
 
-// idleEvictAfter: documents not accessed for this long are closed and freed.
-const idleEvictAfter = 5 * time.Minute
+// idleEvictAfter: documents not accessed for this long are closed from memory.
+// PDF file stays on disk for fast re-open.
+const idleEvictAfter = 15 * time.Minute
 
 type PageInfo struct {
 	Width  float64 `json:"w"`
@@ -203,83 +204,73 @@ func (p *PDFPool) runDownload(docID, jwtToken string, flight *downloadFlight) {
 
 
 func (p *PDFPool) downloadAndOpen(docID string, jwtToken string, flight *downloadFlight) (*OpenDocument, error) {
-	log.Printf("[Pool] Downloading PDF %s ...", docID)
-	url := fmt.Sprintf("%s/api/documents/%s/proxy", p.expressURL, docID)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	if jwtToken != "" {
-		req.Header.Set("Authorization", "Bearer "+jwtToken)
-	}
-
-	// Large PDFs (800-900 MB) need a longer timeout.
-	// We stream directly to disk — no full-file RAM spike.
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to reach external API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Stream directly to disk — avoids loading entire large PDF into RAM.
-	// For a 900 MB file this saves ~900 MB of heap pressure.
-	// Track progress atomically so /prepare/status can poll it.
-	if cl := resp.ContentLength; cl > 0 && flight != nil {
-		atomic.StoreInt64(&flight.total, cl)
-	}
 	filePath := filepath.Join("/tmp/pdfs", docID+".pdf")
-	f, err := os.Create(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
-	}
 
-	// progressReader wraps resp.Body and counts bytes written
-	var progressReader io.Reader = resp.Body
-	if flight != nil {
-		progressReader = &countingReader{r: resp.Body, n: &flight.written}
-	}
-	written, err := io.Copy(f, progressReader)
-	f.Close()
-	if err != nil {
-		os.Remove(filePath)
-		return nil, fmt.Errorf("failed to stream PDF to disk: %w", err)
-	}
-	log.Printf("[Pool] Downloaded %d bytes for %s (streamed)", written, docID)
-
-	log.Printf("[Pool] Opening %d fitz handles for %s ...", fitzHandleCount, docID)
-	var openedHandles []*fitz.Document
-	for i := 0; i < fitzHandleCount; i++ {
-		h, err := fitz.New(filePath)
+	// FAST PATH: if PDF file already exists on disk (from previous session), skip download entirely
+	if stat, err := os.Stat(filePath); err == nil && stat.Size() > 0 {
+		log.Printf("[Pool] Reusing cached PDF on disk: %s (%d bytes)", docID, stat.Size())
+	} else {
+		// Download from backend
+		log.Printf("[Pool] Downloading PDF %s ...", docID)
+		url := fmt.Sprintf("%s/api/documents/%s/proxy", p.expressURL, docID)
+		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			for _, oh := range openedHandles {
-				oh.Close()
-			}
-			return nil, fmt.Errorf("failed to open fitz handle %d: %w", i, err)
+			return nil, err
 		}
-		openedHandles = append(openedHandles, h)
+		if jwtToken != "" {
+			req.Header.Set("Authorization", "Bearer "+jwtToken)
+		}
+
+		client := &http.Client{Timeout: 30 * time.Minute}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reach external API: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		if cl := resp.ContentLength; cl > 0 && flight != nil {
+			atomic.StoreInt64(&flight.total, cl)
+		}
+		f, err := os.Create(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp file: %w", err)
+		}
+
+		var progressReader io.Reader = resp.Body
+		if flight != nil {
+			progressReader = &countingReader{r: resp.Body, n: &flight.written}
+		}
+		written, err := io.Copy(f, progressReader)
+		f.Close()
+		if err != nil {
+			os.Remove(filePath)
+			return nil, fmt.Errorf("failed to stream PDF to disk: %w", err)
+		}
+		log.Printf("[Pool] Downloaded %d bytes for %s (streamed)", written, docID)
 	}
 
-	first := openedHandles[0]
+	// Open first handle immediately (for page info), remaining handles in background
+	log.Printf("[Pool] Opening fitz handle 1/%d for %s ...", fitzHandleCount, docID)
+	first, err := fitz.New(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open fitz: %w", err)
+	}
+
 	pageCount := first.NumPage()
 	pages := make([]PageInfo, pageCount)
-	
+
 	// Map ToC bookmarks to page labels — LEAF nodes only.
-	// Container entries like "Sheets" have children (next entry has deeper Level) and must
-	// be skipped, otherwise "Sheets" would become the label for the first sheet page.
-	// An entry is a leaf if the NEXT entry has the same or shallower level (or it's the last).
-	toc, err := first.ToC()
+	toc, tocErr := first.ToC()
 	labelMap := make(map[int]string)
-	if err == nil {
+	if tocErr == nil {
 		for i, entry := range toc {
 			isLeaf := i == len(toc)-1 || toc[i+1].Level <= entry.Level
 			if isLeaf && entry.Page >= 0 && entry.Page < pageCount {
-				// Only use the first (highest-priority) bookmark for a page
 				if _, exists := labelMap[entry.Page]; !exists {
 					labelMap[entry.Page] = entry.Title
 				}
@@ -294,16 +285,26 @@ func (p *PDFPool) downloadAndOpen(docID string, jwtToken string, flight *downloa
 			width = float64(rect.Dx())
 			height = float64(rect.Dy())
 		}
-		label := labelMap[i]
-		pages[i] = PageInfo{Width: width, Height: height, Label: label}
+		pages[i] = PageInfo{Width: width, Height: height, Label: labelMap[i]}
 	}
 
 	handles := make(chan *fitz.Document, fitzHandleCount)
-	for _, h := range openedHandles {
-		handles <- h
-	}
+	handles <- first
 
-	log.Printf("[Pool] Opened %s — pages: %d, handles: %d", docID, pageCount, fitzHandleCount)
+	// Open remaining handles in background (non-blocking — document is already usable)
+	go func() {
+		for i := 1; i < fitzHandleCount; i++ {
+			h, err := fitz.New(filePath)
+			if err != nil {
+				log.Printf("[Pool] Warning: failed to open extra fitz handle %d for %s: %v", i, docID, err)
+				continue
+			}
+			handles <- h
+		}
+		log.Printf("[Pool] All %d handles ready for %s", fitzHandleCount, docID)
+	}()
+
+	log.Printf("[Pool] Opened %s — pages: %d, handle 1 ready (3 more in background)", docID, pageCount)
 
 	return &OpenDocument{
 		DocID:     docID,
@@ -347,8 +348,9 @@ func (p *PDFPool) removeDocumentLocked(docID string) {
 			h := <-doc.handles
 			h.Close()
 		}
-		os.Remove(doc.FilePath)
-		log.Printf("[Pool] Freed %s", docID)
+		// Keep PDF on disk for fast re-open (skip download next time).
+		// Disk cleanup handled by OS /tmp or manual cache clear.
+		log.Printf("[Pool] Freed %s (PDF kept on disk for cache)", docID)
 	}()
 }
 

@@ -266,6 +266,51 @@ function convertAnnotation(
     }
   }
 
+  // ── Additional PDF annotation keys for full round-trip ──────────────────────
+  // Measure dict (measurement calibration)
+  if (annot.Measure || annot.measure) {
+    bsiCustom._pdf_Measure = JSON.stringify(annot.Measure ?? annot.measure);
+  }
+  // Border effect (cloud style)
+  if (annot.borderEffect || annot.BE) {
+    const be = annot.borderEffect ?? annot.BE;
+    if (be && typeof be === 'object') {
+      bsiCustom.borderEffect = JSON.stringify({ style: be.style ?? be.S ?? '', intensity: be.intensity ?? be.I ?? 0 });
+    }
+  }
+  // Intent — save raw value alongside the parsed `intent` variable
+  if (intent) {
+    bsiCustom._pdf_IT = intent;
+  }
+  // Line endings — save raw array
+  if (Array.isArray(annot.lineEndings) && annot.lineEndings.length >= 2) {
+    bsiCustom._pdf_LE = JSON.stringify(annot.lineEndings);
+  }
+  // Optional Content (layer reference)
+  if (annot.OC) {
+    bsiCustom._pdf_OC = JSON.stringify(annot.OC);
+  }
+  // Flags — extract locked bit (bit 8, value 128)
+  if (typeof annot.flags === 'number' && (annot.flags & 128) !== 0) {
+    bsiCustom.locked = 'true';
+  }
+  // Rotation
+  if (typeof annot.rotation === 'number' || typeof annot.Rotation === 'number') {
+    bsiCustom.angle = String(annot.rotation ?? annot.Rotation);
+  }
+  // Stroke opacity (CA)
+  if (typeof annot.CA === 'number' && annot.CA !== 1) {
+    bsiCustom.strokeOpacity = String(annot.CA);
+  }
+  // Blend mode
+  if (annot.BM) {
+    bsiCustom._pdf_BM = String(annot.BM);
+  }
+  // Appearance stream presence
+  if (annot.AP || annot.hasAppearance) {
+    bsiCustom._hasAppearanceStream = 'true';
+  }
+
   const base = (): Record<string, unknown> => ({
     stroke,
     strokeWidth: strokeWidth || 1,
@@ -274,6 +319,7 @@ function convertAnnotation(
     ...(subject ? { subject } : {}),
     ...(authorName ? { bluebeamAuthor: authorName } : {}),
     source: 'bluebeam_import',
+    _pdf_Subtype: sub || '',
     ...(annot.id ? { pdfAnnotId: annot.id } : {}),
     ...(opacity !== 1 ? { opacity } : {}),
     ...(creationDate ? { createdAt: creationDate } : {}),
@@ -396,10 +442,21 @@ function convertAnnotation(
 
     const arrowStyle = leToArrowStyle(annot.lineEndings);
     if (intent === 'LineArrow' || arrowStyle) {
+      const leArr: string[] | undefined = annot.lineEndings;
+      const arrowProps: Record<string, unknown> = {
+        ...base(),
+        arrowStyle: arrowStyle ?? 'end',
+        comment: text,
+      };
+      // Preserve exact PDF line ending types for round-trip fidelity
+      if (leArr && leArr.length >= 2) {
+        arrowProps.lineEndStart = leArr[0]; // e.g. 'OpenArrow', 'ClosedArrow', 'Diamond', 'Square', 'Circle', 'Slash', 'Butt', 'None'
+        arrowProps.lineEndEnd = leArr[1];
+      }
       return {
         type: 'arrow', pageNumber: pageIndex,
         coordinates: coords,
-        properties: { ...base(), arrowStyle: arrowStyle ?? 'end', comment: text },
+        properties: arrowProps,
       };
     }
 

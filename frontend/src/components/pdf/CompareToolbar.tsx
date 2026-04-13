@@ -1,10 +1,9 @@
 import React from 'react';
-import { Box, Typography, IconButton, Button, Slider, Tooltip, useTheme, alpha, useMediaQuery } from '@mui/material';
+import { Box, Typography, IconButton, Slider, Tooltip, useTheme, alpha, useMediaQuery, CircularProgress } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import DownloadIcon from '@mui/icons-material/Download';
-import SaveIcon from '@mui/icons-material/Save';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 
 interface CompareToolbarProps {
   oldColor: string;
@@ -18,6 +17,8 @@ interface CompareToolbarProps {
   onClose: () => void;
   onExport?: () => void;
   onSave?: () => void;
+  onDetectChanges?: () => void;
+  isDetecting?: boolean;
   oldLabel?: string;
   newLabel?: string;
 }
@@ -25,13 +26,12 @@ interface CompareToolbarProps {
 export default function CompareToolbar({
   oldColor, newColor, opacity, onOpacityChange,
   showOld, showNew, onToggleOld, onToggleNew,
-  onClose, onExport, onSave, oldLabel = 'Old', newLabel = 'New',
+  onClose, onDetectChanges, isDetecting, oldLabel = 'Old', newLabel = 'New',
 }: CompareToolbarProps) {
   const theme = useTheme();
   const gold = theme.palette.primary.main;
   const isMobile = useMediaQuery('(max-width:1050px)');
 
-  // Layer toggle button
   const LayerBtn = ({ active, color, label, onClick }: { active: boolean; color: string; label: string; onClick: () => void }) => (
     <Box onClick={onClick} sx={{
       display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer',
@@ -46,7 +46,7 @@ export default function CompareToolbar({
     </Box>
   );
 
-  // ── MOBILE: appears directly above the mobile toolbar, same width style ──
+  // ── MOBILE ──
   if (isMobile) {
     return (
       <Box sx={{
@@ -64,14 +64,18 @@ export default function CompareToolbar({
         <Slider value={opacity} onChange={(_, v) => onOpacityChange(v as number)}
           min={10} max={90} step={5} size="small"
           sx={{ color: gold, flex: 1, mx: 0.5, minWidth: 30, '& .MuiSlider-thumb': { width: 10, height: 10 } }} />
-        {onExport && <IconButton size="small" onClick={onExport} sx={{ p: '3px', color: gold }}><DownloadIcon sx={{ fontSize: 16 }} /></IconButton>}
-        {onSave && <IconButton size="small" onClick={onSave} sx={{ p: '3px', color: gold }}><SaveIcon sx={{ fontSize: 16 }} /></IconButton>}
+        <Typography sx={{ fontSize: '0.58rem', fontWeight: 700, minWidth: 20, textAlign: 'center', color: 'text.secondary' }}>{opacity}%</Typography>
+        {onDetectChanges && (
+          <IconButton size="small" onClick={onDetectChanges} disabled={isDetecting} sx={{ p: '3px', color: gold }}>
+            {isDetecting ? <CircularProgress size={14} color="inherit" /> : <AutoFixHighIcon sx={{ fontSize: 16 }} />}
+          </IconButton>
+        )}
         <IconButton size="small" onClick={onClose} sx={{ p: '3px', color: 'error.main' }}><CloseIcon sx={{ fontSize: 16 }} /></IconButton>
       </Box>
     );
   }
 
-  // ── DESKTOP: clean bar directly under PdfToolbar ──
+  // ── DESKTOP ──
   return (
     <Box sx={{
       position: 'absolute', top: 6, left: '50%', transform: 'translateX(-50%)',
@@ -83,36 +87,28 @@ export default function CompareToolbar({
       border: `1px solid ${theme.palette.divider}`,
       boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
     }}>
-      <Typography sx={{ fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5, color: gold }}>
-        COMPARE
-      </Typography>
-
-      <Box sx={{ width: 1, height: 16, bgcolor: 'divider' }} />
-
       <LayerBtn active={showOld} color={oldColor} label={oldLabel} onClick={onToggleOld} />
       <LayerBtn active={showNew} color={newColor} label={newLabel} onClick={onToggleNew} />
 
-      <Box sx={{ width: 1, height: 16, bgcolor: 'divider' }} />
-
       <Slider value={opacity} onChange={(_, v) => onOpacityChange(v as number)}
         min={10} max={90} step={5} size="small"
-        sx={{ color: gold, width: 60, '& .MuiSlider-thumb': { width: 10, height: 10 } }} />
-      <Typography sx={{ fontSize: '0.62rem', fontWeight: 600, minWidth: 22 }}>{opacity}%</Typography>
-
-      <Box sx={{ width: 1, height: 16, bgcolor: 'divider' }} />
-
-      {onExport && (
-        <Tooltip title="Download comparison PDF">
-          <IconButton size="small" onClick={onExport} sx={{ p: '3px', color: gold }}><DownloadIcon sx={{ fontSize: 15 }} /></IconButton>
+        sx={{ color: gold, width: 180, '& .MuiSlider-thumb': { width: 10, height: 10 } }} />
+      <Typography sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary', whiteSpace: 'nowrap' }}>{opacity}%</Typography>
+      {onDetectChanges && (
+        <Tooltip title="Auto-detect changes (place revision clouds)">
+          <span>
+            <IconButton size="small" onClick={onDetectChanges} disabled={isDetecting}
+              sx={{ p: '3px', color: gold, '&:hover': { bgcolor: alpha(gold, 0.1) } }}>
+              {isDetecting ? <CircularProgress size={14} color="inherit" /> : <AutoFixHighIcon sx={{ fontSize: 15 }} />}
+            </IconButton>
+          </span>
         </Tooltip>
       )}
-      {onSave && (
-        <Tooltip title="Save to project">
-          <IconButton size="small" onClick={onSave} sx={{ p: '3px', color: gold }}><SaveIcon sx={{ fontSize: 15 }} /></IconButton>
-        </Tooltip>
-      )}
+
       <Tooltip title="Exit compare">
-        <IconButton size="small" onClick={onClose} sx={{ p: '3px', color: 'text.disabled', '&:hover': { color: 'error.main' } }}><CloseIcon sx={{ fontSize: 15 }} /></IconButton>
+        <IconButton size="small" onClick={onClose} sx={{ p: '3px', color: 'text.disabled', '&:hover': { color: 'error.main' } }}>
+          <CloseIcon sx={{ fontSize: 15 }} />
+        </IconButton>
       </Tooltip>
     </Box>
   );
