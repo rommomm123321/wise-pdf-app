@@ -2,3 +2,4 @@
 /dist
 .env
 backend/credentials/google-drive-key.json
+developer-access-guide.md

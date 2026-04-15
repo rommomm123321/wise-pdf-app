@@ -476,7 +476,13 @@ function buildBSIColumnData(props: Record<string, unknown>, doc: PDFDocument): P
 function formatMeasurement(pdfPts: number, docScale: string): string {
   const m = docScale.match(/([\d/.]+)"?\s*=\s*([\d/.]+)'?\s*([\d/.]+)?/);
   if (!m) return `${(pdfPts / 72).toFixed(2)} in`;
-  const parseNum = (s: string) => s.includes('/') ? eval(s) : parseFloat(s);
+  const parseNum = (s: string) => {
+    if (s.includes('/')) {
+      const [num, den] = s.split('/').map(Number);
+      return den ? num / den : num;
+    }
+    return parseFloat(s);
+  };
   const drawInch = parseNum(m[1]);
   const realFeet = parseNum(m[2]);
   const realInch = m[3] ? parseNum(m[3]) : 0;

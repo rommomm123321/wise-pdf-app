@@ -82,7 +82,10 @@
       "Bash(find . -path \"*/go-fitz/fitz.go\" -exec head -100 {} \\\\;)",
       "Bash(docker restart:*)",
       "Bash(grep:*)",
-      "Bash(dotnet build:*)"
+      "Bash(dotnet build:*)",
+      "Bash(ssh-keygen:*)",
+      "Bash(ssh:*)",
+      "Bash(chmod +x:*)"
     ]
   }
 }
