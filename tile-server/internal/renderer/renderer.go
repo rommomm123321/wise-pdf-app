@@ -115,11 +115,11 @@ func (r *TileRenderer) getPageImage(doc *pool.OpenDocument, page, zoom int) (ima
 func qualityForZoom(zoom int) int {
 	switch {
 	case zoom <= 0:
-		return 90 // thumbnails — boosted from 88
+		return 92 // thumbnails
 	case zoom == 1:
-		return 96 // boosted from 94
+		return 97 // near-lossless
 	default:
-		return 100 // zoom 2+: max quality (lossless encoding used below)
+		return 100 // zoom 2+: lossless WebP (zero artifacts on text/lines)
 	}
 }
 
@@ -210,7 +210,9 @@ func (r *TileRenderer) RenderTile(doc *pool.OpenDocument, page, zoom, tileX, til
 	if q > 100 {
 		q = 100
 	}
-	if err := webp.Encode(&buf, cropped, &webp.Options{Lossless: false, Quality: float32(q)}); err != nil {
+	// Zoom 2+ (quality 100): use lossless WebP — zero compression artifacts on text/lines.
+	useLossless := q >= 100
+	if err := webp.Encode(&buf, cropped, &webp.Options{Lossless: useLossless, Quality: float32(q)}); err != nil {
 		return nil, fmt.Errorf("failed to encode WebP: %w", err)
 	}
 	return buf.Bytes(), nil

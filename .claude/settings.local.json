@@ -80,7 +80,9 @@
       "Bash(ls:*)",
       "Bash(grep -r \"ImageDPI\\\\|Image\\(\" vendor/github.com/gen2brain/go-fitz/*.go)",
       "Bash(find . -path \"*/go-fitz/fitz.go\" -exec head -100 {} \\\\;)",
-      "Bash(docker restart:*)"
+      "Bash(docker restart:*)",
+      "Bash(grep:*)",
+      "Bash(dotnet build:*)"
     ]
   }
 }

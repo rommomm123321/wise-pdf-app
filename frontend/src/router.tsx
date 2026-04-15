@@ -10,6 +10,7 @@ import AuditLogPage from "./pages/AuditLogPage";
 import CompaniesPage from "./pages/CompaniesPage";
 import GlobalErrorBoundary from "./components/layout/GlobalErrorBoundary";
 import NotFoundPage from "./pages/NotFoundPage";
+import ReviewActionPage from "./pages/ReviewActionPage";
 
 import { useAuth } from "./contexts/AuthContext";
 
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
       { path: "/users", element: <UsersPage /> },
       { path: "/audit-logs", element: <AuditLogPage /> },
       { path: "/companies", element: <CompaniesPage /> },
+      { path: "/review-action", element: <ReviewActionPage /> },
     ],
   },
   {

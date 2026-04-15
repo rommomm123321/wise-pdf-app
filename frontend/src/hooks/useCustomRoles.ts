@@ -11,6 +11,7 @@ export interface CustomRole {
   defaultCanEdit: boolean;
   defaultCanDelete: boolean;
   defaultCanDownload: boolean;
+  defaultCanUpload: boolean;
   defaultCanMarkup: boolean;
   defaultCanManage: boolean;
   _count?: { users: number };

@@ -21,7 +21,7 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_for_redlines';
 
 // Multer storage for Revit uploads
-const uploadDir = path.join(__dirname, '../../uploads/revit');
+const uploadDir = path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -75,7 +75,7 @@ router.post('/auth/token', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    res.json({ api_token: apiToken, user: { id: user.id, email: user.email, name: user.name } });
+    res.json({ api_token: apiToken, token: apiToken, user: { id: user.id, email: user.email, name: user.name } });
   } catch {
     res.status(403).json({ error: 'Invalid or expired token' });
   }
@@ -106,7 +106,7 @@ router.post('/auth/login', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    res.json({ api_token: apiToken, user: { id: user.id, email: user.email, name: user.name } });
+    res.json({ api_token: apiToken, token: apiToken, user: { id: user.id, email: user.email, name: user.name } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -290,7 +290,36 @@ router.post('/folders/:folderId/upload', authMiddleware, upload.single('file'), 
       await prisma.document.update({ where: { id: existing.id }, data: { isLatest: false } });
     }
 
-    const storageUrl = `/api/documents/file/${req.file.filename}`;
+    // Use same storage provider as web upload (OneDrive if connected)
+    const folderFull = await prisma.folder.findUnique({
+      where: { id: folderId },
+      include: { project: { include: { company: true } } },
+    });
+    const companyId = folderFull?.project?.companyId;
+    let storageUrl = `/uploads/${req.file.filename}`;
+    let externalId = null;
+
+    if (companyId) {
+      try {
+        const StorageFactory = require('../services/storage/StorageFactory');
+        const storage = await StorageFactory.getProviderForCompany(companyId);
+        const OneDriveProvider = require('../services/storage/OneDriveProvider');
+        const targetExternalId = folderFull.externalId || folderFull.project?.externalId;
+        if (storage instanceof OneDriveProvider && targetExternalId) {
+          const fileBuffer = fs.readFileSync(req.file.path);
+          const ext = path.extname(baseName);
+          const nameNoExt = path.basename(baseName, ext);
+          const versionedName = `${nameNoExt}_v${newVersion}${ext}`;
+          externalId = await storage.uploadFile(fileBuffer, versionedName, req.file.mimetype, targetExternalId);
+          storageUrl = externalId;
+          // Clean up local file after OneDrive upload
+          fs.unlink(req.file.path, () => {});
+        }
+      } catch (e) {
+        console.warn('[Revit Upload] OneDrive upload failed, keeping local:', e.message);
+      }
+    }
+
     const doc = await prisma.document.create({
       data: {
         name: baseName,
@@ -298,15 +327,210 @@ router.post('/folders/:folderId/upload', authMiddleware, upload.single('file'), 
         version: newVersion,
         isLatest: true,
         folderId,
-        syncSource: null,
+        externalId,
+        syncSource: externalId ? 'onedrive' : null,
       },
       select: { id: true, name: true, version: true, folderId: true, storageUrl: true },
     });
 
     res.status(201).json({ status: 'ok', data: doc });
   } catch (err) {
-    // Clean up uploaded file on error
     if (req.file?.path) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/revit/folders/:folderId/upload-and-assign
+ * Upload PDF + assign reviewer in one call (Revit one-click workflow).
+ * Body (multipart): file, reviewerId, comment?
+ */
+router.post('/folders/:folderId/upload-and-assign', authMiddleware, upload.single('file'), async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    const userId = req.user.userId;
+    const { reviewerId, comment } = req.body;
+
+    const folder = await prisma.folder.findUnique({ where: { id: folderId }, include: { project: true } });
+    if (!folder || folder.isDeleted) return res.status(404).json({ error: 'Folder not found' });
+
+    const { getFolderPermissions } = require('../middlewares/permissionMiddleware');
+    const perms = await getFolderPermissions(userId, folderId);
+    if (!perms || !perms.canView) return res.status(403).json({ error: 'Access denied' });
+    if (perms.canUpload === false) return res.status(403).json({ error: 'Upload permission denied' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const originalName = req.file.originalname;
+    const baseName = path.basename(originalName, path.extname(originalName)) + path.extname(originalName);
+
+    const existing = await prisma.document.findFirst({
+      where: { folderId, name: baseName, isDeleted: false, isLatest: true },
+      orderBy: { version: 'desc' },
+    });
+    const newVersion = existing ? existing.version + 1 : 1;
+    if (existing) {
+      await prisma.document.update({ where: { id: existing.id }, data: { isLatest: false } });
+    }
+
+    // Upload to OneDrive if connected (same logic as web upload)
+    const folderFull = await prisma.folder.findUnique({
+      where: { id: folderId },
+      include: { project: { include: { company: true } } },
+    });
+    const companyId = folderFull?.project?.companyId;
+    let storageUrl = `/uploads/${req.file.filename}`;
+    let externalId = null;
+
+    if (companyId) {
+      try {
+        const StorageFactory = require('../services/storage/StorageFactory');
+        const storage = await StorageFactory.getProviderForCompany(companyId);
+        const OneDriveProvider = require('../services/storage/OneDriveProvider');
+        const targetExternalId = folderFull.externalId || folderFull.project?.externalId;
+        if (storage instanceof OneDriveProvider && targetExternalId) {
+          const fileBuffer = fs.readFileSync(req.file.path);
+          const ext = path.extname(baseName);
+          const nameNoExt = path.basename(baseName, ext);
+          const versionedName = `${nameNoExt}_v${newVersion}${ext}`;
+          externalId = await storage.uploadFile(fileBuffer, versionedName, req.file.mimetype, targetExternalId);
+          storageUrl = externalId;
+          fs.unlink(req.file.path, () => {});
+        }
+      } catch (e) {
+        console.warn('[Revit Upload+Assign] OneDrive upload failed, keeping local:', e.message);
+      }
+    }
+
+    const doc = await prisma.document.create({
+      data: { name: baseName, storageUrl, version: newVersion, isLatest: true, folderId, externalId, syncSource: externalId ? 'onedrive' : null },
+      select: { id: true, name: true, version: true, folderId: true },
+    });
+
+    // If reviewer specified, create assignment + notification
+    console.log('[Revit Upload] reviewerId:', reviewerId, 'userId:', userId, 'match:', reviewerId === userId);
+    let assignment = null;
+    if (reviewerId) {
+      assignment = await prisma.reviewAssignment.create({
+        data: { documentId: doc.id, requesterId: userId, reviewerId, comment: comment || null, source: 'revit' },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: reviewerId,
+          actorId: userId,
+          documentId: doc.id,
+          projectId: folder.projectId || folder.project?.id || '',
+          type: 'review_request',
+          assignmentId: assignment.id,
+          message: comment || `Please review "${doc.name}" (uploaded from Revit)`,
+        },
+      });
+
+      const io = req.app.get('io');
+      console.log('[Revit Upload] io available:', !!io, 'reviewerId:', reviewerId);
+      if (io) {
+        const requester = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+        console.log('[Revit Upload] Emitting notification:new to user:', reviewerId);
+        io.to(`user:${reviewerId}`).emit('notification:new', {
+          id: assignment.id,
+          type: 'review_request',
+          actorId: userId,
+          actor: { id: userId, name: requester?.name, email: requester?.email },
+          actorName: requester?.name || requester?.email || 'Someone',
+          documentName: doc.name,
+          documentId: doc.id,
+          projectId: folder.projectId || folder.project?.id || '',
+          assignmentId: assignment.id,
+          message: comment || `Please review "${doc.name}" (uploaded from Revit)`,
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
+      } else {
+        console.warn('[Revit Upload] io NOT available — socket notification skipped!');
+      }
+    }
+
+    res.status(201).json({ status: 'ok', data: { ...doc, assignmentId: assignment?.id || null } });
+  } catch (err) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/revit/upload-presets
+ * List user's upload presets for Revit plugin
+ */
+router.get('/upload-presets', authMiddleware, async (req, res) => {
+  try {
+    const presets = await prisma.uploadPreset.findMany({
+      where: { userId: req.user.userId },
+      orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+    });
+    res.json(presets);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/revit/upload-presets
+ */
+router.post('/upload-presets', authMiddleware, async (req, res) => {
+  try {
+    const { name, projectId, folderId, assignToId, isDefault } = req.body;
+    if (!name || !projectId || !folderId) return res.status(400).json({ error: 'name, projectId, folderId required' });
+    if (isDefault) {
+      await prisma.uploadPreset.updateMany({ where: { userId: req.user.userId, isDefault: true }, data: { isDefault: false } });
+    }
+    const preset = await prisma.uploadPreset.create({
+      data: { userId: req.user.userId, name, projectId, folderId, assignToId: assignToId || null, isDefault: isDefault || false },
+    });
+    res.json(preset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/revit/projects/:projectId/users
+ * List users assigned to project (for reviewer selection in Revit plugin)
+ */
+router.get('/projects/:projectId/users', authMiddleware, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const assignments = await prisma.projectAssignment.findMany({
+      where: { projectId },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+    res.json(assignments.map(a => a.user));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/revit/notifications/:id/respond
+ * Respond to review assignment from Revit plugin
+ * Body: { action: "has_markups" | "approved", comment? }
+ */
+router.patch('/notifications/:id/respond', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, comment } = req.body;
+    const userId = req.user.userId;
+
+    const notif = await prisma.notification.findUnique({ where: { id } });
+    if (!notif || notif.userId !== userId) return res.status(404).json({ error: 'Not found' });
+    if (!notif.assignmentId) return res.status(400).json({ error: 'Not a review notification' });
+
+    // Delegate to assignment respond logic
+    const ctrl = require('../controllers/ReviewAssignmentController');
+    req.params.id = notif.assignmentId;
+    req.body = { action, comment };
+    req.user = { id: userId, ...req.user };
+    return ctrl.respond(req, res);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

@@ -9,10 +9,15 @@ export interface AppNotification {
   userId: string;
   actorId: string;
   actor: { id: string; name?: string; email: string };
-  markupId: string;
-  documentId: string;
-  projectId: string;
-  documentName: string;
+  markupId?: string;
+  documentId?: string;
+  projectId?: string;
+  documentName?: string;
+  // Review assignment support
+  type?: 'mention' | 'review_request' | 'review_approved' | 'review_rejected';
+  assignmentId?: string;
+  assignmentStatus?: 'pending' | 'has_markups' | 'approved';
+  message?: string;
   read: boolean;
   createdAt: string;
 }
@@ -43,20 +48,26 @@ export function useNotifications() {
   useEffect(() => {
     if (!user || !token) return;
     const socket = getSocket(token);
-    const handler = (n: AppNotification) => {
+    const handler = (n: any) => {
+      console.log('[Notifications] Received notification:new', n);
+      const notif: AppNotification = {
+        ...n,
+        id: n.id || crypto.randomUUID(),
+        read: false,
+      };
       setNotifications(prev => {
-        if (prev.some(x => x.id === n.id)) return prev;
-        return [n, ...prev];
+        if (notif.id && prev.some(x => x.id === notif.id)) return prev;
+        return [notif, ...prev];
       });
 
-      // Use stable id so react-hot-toast deduplicates if handler fires twice
-      if (!n.read) {
-        const actorName = n.actor?.name || n.actor?.email || 'Someone';
-        const docName = n.documentName || 'a document';
-        toast.success(`${actorName} mentioned you in "${docName}"`, {
-          id: `mention-${n.id}`,
-          duration: 6000,
-        });
+      if (!notif.read) {
+        const actorName = notif.actor?.name || notif.actor?.email || (n as any).actorName || 'Someone';
+        const docName = notif.documentName || 'a document';
+        const msg = notif.type === 'review_request' ? `${actorName} assigned you to review "${docName}"`
+          : notif.type === 'review_approved' ? `${actorName} approved "${docName}"`
+          : notif.type === 'review_rejected' ? `${actorName} found issues in "${docName}"`
+          : `${actorName} mentioned you in "${docName}"`;
+        toast.success(msg, { id: `notif-${notif.id}`, duration: 6000 });
       }
     };
     socket.on('notification:new', handler);
@@ -83,7 +94,21 @@ export function useNotifications() {
     await apiFetch('/api/notifications', { method: 'DELETE' }).catch(() => {});
   }, []);
 
+  // Respond to review assignment (has_markups / approved)
+  const respondToAssignment = useCallback(async (assignmentId: string, action: 'has_markups' | 'approved', comment?: string) => {
+    try {
+      await apiFetch(`/api/review-assignments/${assignmentId}/respond`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action, comment }),
+      });
+      toast.success(action === 'approved' ? 'Approved — ready to print' : 'Sent back for corrections');
+      fetchNotifications();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to respond');
+    }
+  }, [fetchNotifications]);
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  return { notifications, loading, unreadCount, markRead, markAllRead, deleteOne, deleteAll, refetch: fetchNotifications };
+  return { notifications, loading, unreadCount, markRead, markAllRead, deleteOne, deleteAll, respondToAssignment, refetch: fetchNotifications };
 }

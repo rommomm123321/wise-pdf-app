@@ -1,6 +1,6 @@
 // Service Worker for tile caching — Redlines PDF Viewer
 // Cache name — bump version to force refresh
-const CACHE_NAME = 'redlines-tiles-v2';
+const CACHE_NAME = 'redlines-tiles-v3';
 // Tile URLs to intercept
 const TILE_URL_PATTERNS = ['/tiles/', '/thumbnail/'];
 // Max age for cached tiles (7 days in milliseconds)

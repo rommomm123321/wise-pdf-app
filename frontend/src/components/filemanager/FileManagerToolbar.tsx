@@ -9,10 +9,12 @@ import {
   TextField,
   Paper,
   InputAdornment,
+  IconButton,
   useMediaQuery,
 } from '@mui/material';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import ViewListIcon from '@mui/icons-material/ViewList';
+import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 import { useTranslation } from 'react-i18next';
 import ColumnVisibilityMenu from '../common/ColumnVisibilityMenu';
@@ -106,6 +108,13 @@ export default function FileManagerToolbar({
                     <SearchIcon fontSize="small" />
                   </InputAdornment>
                 ),
+                endAdornment: searchQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => onSearchChange('')} edge="end">
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
               }}
             />
 

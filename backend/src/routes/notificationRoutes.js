@@ -24,7 +24,19 @@ router.get('/', async (req, res) => {
       select: { id: true, name: true },
     });
     const docMap = Object.fromEntries(docs.map(d => [d.id, d.name]));
-    const result = notifications.map(n => ({ ...n, documentName: docMap[n.documentId] || '' }));
+
+    // Attach assignment status for review notifications (so UI knows if already responded)
+    const assignmentIds = notifications.map(n => n.assignmentId).filter(Boolean);
+    const assignments = assignmentIds.length > 0
+      ? await prisma.reviewAssignment.findMany({ where: { id: { in: assignmentIds } }, select: { id: true, status: true } })
+      : [];
+    const assignMap = Object.fromEntries(assignments.map(a => [a.id, a.status]));
+
+    const result = notifications.map(n => ({
+      ...n,
+      documentName: docMap[n.documentId] || '',
+      assignmentStatus: n.assignmentId ? (assignMap[n.assignmentId] || 'pending') : undefined,
+    }));
     res.json({ status: 'ok', data: result });
   } catch (err) {
     res.status(500).json({ error: err.message });

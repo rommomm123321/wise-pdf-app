@@ -448,6 +448,10 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
       isAdminRef.current = isAdmin;
       canMarkupRef.current = canMarkup;
       activeSessionIdRef.current = activeSessionId;
+      if (showAuthorOnMarkupRef.current !== showAuthorOnMarkup) {
+        // Force full re-sync when toggled — clear tsCache so all objects get recreated
+        tsCache.current.clear();
+      }
       showAuthorOnMarkupRef.current = showAuthorOnMarkup;
       electricalConfigRef.current = electricalConfig;
       hiddenLayersRef.current = hiddenLayers;
@@ -679,6 +683,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         borderScaleFactor: 1.5,
         padding: 6,
         cornerStyle: "circle",
+        perPixelTargetFind: false, // bounding box hit test — click anywhere inside to select
       });
 
       const canvasElement = canvas.getElement();
@@ -1220,7 +1225,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               }
             }
             preview = new fabric.Group(parts, { left: pointer.x - previewW / 2, top: pointer.y - previewH / 2, opacity: 0.5, selectable: false, evented: false });
-          } else {
+          } else if (toolRef.current === 'panel') {
             // panel preview
             const text = config?.defaultText || 'PANEL';
             const outer = new fabric.Rect({ left: 0, top: 0, width: previewW, height: previewH, fill: 'rgba(255,255,255,0.7)', stroke: color, strokeWidth: sw * 1.5 });
@@ -2275,12 +2280,15 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
             movingBorder.setCoords();
           }
         }
-        // Update author label position during drag
+        // Update author label position during drag (below bounding box, always horizontal)
         if (obj.data?.id && showAuthorOnMarkupRef.current) {
           const movingAuthorLabel = authorLabelCache.current.get(obj.data.id);
           if (movingAuthorLabel) {
             const bounds = obj.getBoundingRect(true);
-            movingAuthorLabel.set({ left: bounds.left + bounds.width / 2, top: bounds.top + bounds.height + 2 });
+            movingAuthorLabel.set({
+              left: bounds.left + bounds.width / 2,
+              top: bounds.top + bounds.height + 2,
+            });
             movingAuthorLabel.setCoords();
           }
         }
@@ -2325,12 +2333,15 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
           rotatingLabel.set({ left: center.x, top: center.y, angle });
           rotatingLabel.setCoords();
         }
-        // Reposition author label around the rotated bounding box
+        // Reposition author label below the rotated bounding box (always horizontal/readable)
         if (showAuthorOnMarkupRef.current) {
           const rotatingAuthor = authorLabelCache.current.get(id);
           if (rotatingAuthor) {
             const bounds = obj.getBoundingRect(true);
-            rotatingAuthor.set({ left: bounds.left + bounds.width / 2, top: bounds.top + bounds.height + 2 });
+            rotatingAuthor.set({
+              left: bounds.left + bounds.width / 2,
+              top: bounds.top + bounds.height + 2,
+            });
             rotatingAuthor.setCoords();
           }
         }
@@ -3286,9 +3297,9 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 backgroundColor: '',
                 stroke: 'transparent',
                 strokeWidth: 0,
-                editable: false, // NEVER use Fabric enterEditing — HTML textarea overlay handles editing (avoids black screen)
+                editable: false, perPixelTargetFind: false,
                 splitByGrapheme: false,
-                objectCaching: false,
+                objectCaching: true, // cache for correct z-order (text doesn't bleed through overlapping markups)
               });
               textboxObj.set('data', { id: m.id, type: 'callout', part: 'textbox', canEdit });
               textboxObj.set({
@@ -3653,8 +3664,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               padding: notePad,
               stroke: "transparent",
               strokeWidth: 0,
-              editable: false, // NEVER use Fabric enterEditing — HTML textarea overlay handles editing (avoids black screen)
-              objectCaching: false,
+              editable: false, perPixelTargetFind: false,
+              objectCaching: true,
               shadow: new (fabric as any).Shadow({ color: 'rgba(0,0,0,0.25)', blur: 10 * s, offsetX: 2 * s, offsetY: 4 * s }),
             });
           } else if (m.type === "text") {
@@ -3674,8 +3685,8 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
               backgroundColor: fill === "transparent" ? "" : fill,
               stroke: "transparent",
               strokeWidth: 0,
-              editable: false, // NEVER use Fabric enterEditing — HTML textarea overlay handles editing (avoids black screen)
-              objectCaching: false,
+              editable: false, perPixelTargetFind: false,
+              objectCaching: true,
             });
             // Rectangular border — companion Rect drawn behind the Textbox
             if (hasBorder) {
@@ -4023,6 +4034,7 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
                 let ah = 0;
                 for (let i = 0; i < authorName.length; i++) ah = ((ah << 5) - ah + authorName.charCodeAt(i)) | 0;
                 const authorColor = ACOLORS[Math.abs(ah) % ACOLORS.length];
+                // Position author label below the visual bounding box, always horizontal (readable)
                 const authorLabel = new fabric.Text(authorName, {
                   left: bounds.left + bounds.width / 2,
                   top: bounds.top + bounds.height + 2,
@@ -4118,14 +4130,29 @@ const MarkupLayer = forwardRef<MarkupLayerRef, MarkupLayerProps>(
         }
       }
       syncMarkups(canvas, markups, width, height, scale);
-      // Ensure auxLabels (measure/polyline/stamp text) are always on top of their shapes.
-      // After syncMarkups adds/removes objects, z-order may be wrong.
-      for (const lbl of auxLabelCache.current.values()) {
-        if (lbl.canvas) canvas.bringToFront(lbl);
-      }
-      // Author labels also on top
-      for (const lbl of authorLabelCache.current.values()) {
-        if (lbl.canvas) canvas.bringToFront(lbl);
+      // Z-order: use Fabric's safe moveTo() API — sort markups by zIndex,
+      // then position each markup's group (shape + aux + author) in order.
+      // NEVER manipulate canvas._objects directly — it corrupts Fabric's internal state.
+      const sortedByZ = [...(markups || [])].sort(
+        (a, b) => ((a.properties?.zIndex || 0) - (b.properties?.zIndex || 0))
+      );
+      let zPos = 0;
+      for (const m of sortedByZ) {
+        const border = textBorderCache.current.get(m.id);
+        if (border?.canvas) { canvas.moveTo(border, zPos); zPos++; }
+        // Connector line UNDER cloud (drawn first, cloud covers the overlap)
+        const calloutLine = calloutLineCache.current.get(m.id);
+        if (calloutLine?.canvas) { canvas.moveTo(calloutLine, zPos); zPos++; }
+        const calloutBg = calloutTextboxBgCache.current.get(m.id);
+        if (calloutBg?.canvas) { canvas.moveTo(calloutBg, zPos); zPos++; }
+        const shape = objectCache.current.get(m.id);
+        if (shape?.canvas) { canvas.moveTo(shape, zPos); zPos++; }
+        const calloutTail = calloutTailCache.current.get(m.id);
+        if (calloutTail?.canvas) { canvas.moveTo(calloutTail, zPos); zPos++; }
+        const aux = auxLabelCache.current.get(m.id);
+        if (aux?.canvas) { canvas.moveTo(aux, zPos); zPos++; }
+        const author = authorLabelCache.current.get(m.id);
+        if (author?.canvas) { canvas.moveTo(author, zPos); zPos++; }
       }
     }, [width, height, scale, syncMarkups, markups, docScale, activeSessionId, showAuthorOnMarkup]);
 

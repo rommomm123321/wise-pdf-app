@@ -666,7 +666,7 @@ function addMarkupAnnotation(
 
 // ─── Core: add annotations to an already-loaded PDFDocument ──────────────────
 
-async function annotateDoc(
+export async function annotateDoc(
   pdfDoc: PDFDocument,
   allMarkups: unknown[],
   docScale: string,
@@ -697,6 +697,7 @@ async function annotateDoc(
     const pageMarkups = (allMarkups as Record<string, unknown>[]).filter(
       m => (m.pageNumber as number) === i && !hidden.has(m.type as string),
     );
+    // console.log(`[ExportPDF] Page ${i}: ${pageMarkups.length} markups, size: ${pw}x${ph}`);
     for (const m of pageMarkups) {
       try {
         const ppage = page as unknown as Parameters<typeof addMarkupAnnotation>[1];
@@ -709,7 +710,7 @@ async function annotateDoc(
           addStatusAnnot(primaryRef, status, authorName, pdfDoc, ppage);
         }
       } catch (e) {
-        console.warn('Skipped markup annotation:', m.type, e);
+        // console.warn('[ExportPDF] SKIPPED markup:', (m as any).type, 'coords:', JSON.stringify((m as any).coordinates), 'error:', e);
       }
     }
   }
@@ -734,8 +735,23 @@ export interface ExportOptions {
 export async function exportPdfWithMarkups(opts: ExportOptions): Promise<void> {
   const { pdfDocProxy, allMarkups, docScale, hiddenLayers = [], docName = 'export', tilePageSizes, onProgress } = opts;
 
+  // Count markup types for debugging
+  const typeCounts: Record<string, number> = {};
+  for (const m of allMarkups as any[]) {
+    const t = m.type || 'unknown';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  }
+  // console.log(`[ExportPDF] Total markups: ${allMarkups.length}, types:`, typeCounts);
+  // console.log(`[ExportPDF] docScale: ${docScale}, hiddenLayers:`, hiddenLayers);
+
   const rawBytes = await pdfDocProxy.getData();
   const pdfDoc = await PDFDocument.load(rawBytes);
+
+  // Log page sizes
+  for (let i = 0; i < Math.min(pdfDoc.getPageCount(), 3); i++) {
+    const sz = pdfDoc.getPage(i).getSize();
+    // console.log(`[ExportPDF] Page ${i}: ${sz.width} x ${sz.height}`);
+  }
 
   await annotateDoc(pdfDoc, allMarkups, docScale, hiddenLayers, tilePageSizes, onProgress);
 
@@ -772,11 +788,23 @@ export async function exportDocumentWithMarkups(opts: StandaloneExportOptions): 
   ]);
 
   if (!pdfRes.ok) throw new Error(`Failed to fetch PDF: ${pdfRes.status}`);
+  if (!markupsRes.ok) throw new Error(`Failed to fetch markups: ${markupsRes.status}`);
   const rawBytes = new Uint8Array(await pdfRes.arrayBuffer());
   const markupsJson = await markupsRes.json();
-  const allMarkups: unknown[] = markupsJson?.data ?? [];
+  const allMarkups: unknown[] = Array.isArray(markupsJson?.data) ? markupsJson.data : Array.isArray(markupsJson) ? markupsJson : [];
+
+  // console.log(`[ExportPDF-standalone] Fetched ${allMarkups.length} markups for doc ${documentId}`);
 
   const pdfDoc = await PDFDocument.load(rawBytes);
+
+  // Debug: log page sizes
+  for (let i = 0; i < Math.min(pdfDoc.getPageCount(), 3); i++) {
+    const sz = pdfDoc.getPage(i).getSize();
+    // console.log(`[ExportPDF] Page ${i} size: ${sz.width}x${sz.height}`);
+  }
+
+  // Don't pass tilePageSizes — markup coords are 0..1 normalized,
+  // pdf-lib getSize() returns correct native PDF dimensions.
   await annotateDoc(pdfDoc, allMarkups, docScale, hiddenLayers, undefined, onProgress);
 
   const outBytes = await pdfDoc.save();

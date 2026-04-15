@@ -86,6 +86,13 @@ class DocumentController {
         include: { project: { include: { company: true } } }
       });
       if (!folder) return res.status(404).json({ error: 'Folder not found' });
+
+      // Check canUpload permission
+      const { getFolderPermissions } = require('../middlewares/permissionMiddleware');
+      const perms = await getFolderPermissions(req.user.userId, folderId);
+      if (perms && perms.canUpload === false) {
+        return res.status(403).json({ error: 'Upload permission denied' });
+      }
       const companyId = folder.project.companyId;
 
       // Find existing doc with same name in this folder to increment version (exclude soft-deleted)
@@ -165,11 +172,18 @@ class DocumentController {
 
       if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-      const oldDoc = await prisma.document.findUnique({ 
+      const oldDoc = await prisma.document.findUnique({
         where: { id: documentId },
         include: { folder: { include: { project: { include: { company: true } } } } }
       });
       if (!oldDoc) return res.status(404).json({ error: 'Document not found' });
+
+      // Check canUpload permission
+      const { getFolderPermissions } = require('../middlewares/permissionMiddleware');
+      const perms = await getFolderPermissions(req.user.userId, oldDoc.folderId);
+      if (perms && perms.canUpload === false) {
+        return res.status(403).json({ error: 'Upload permission denied' });
+      }
 
       // Mark old as not latest
       await prisma.document.update({
@@ -529,13 +543,22 @@ class DocumentController {
         return;
       }
 
-      // Serve local file directly with auth (avoiding redirects which break in proxy scenarios)
-      if (process.env.STORAGE_TYPE === 'local' || !process.env.STORAGE_TYPE) {
-        const fileName = doc.storageUrl.replace(/^\/uploads\//, '');
-        const filePath = path.resolve(process.cwd(), 'uploads', fileName);
+      // Serve local file directly with auth
+      // storageUrl can be "/uploads/filename" or "/api/documents/file/filename" (Revit upload)
+      const isLocalFile = doc.storageUrl.startsWith('/uploads/') || doc.storageUrl.startsWith('/api/documents/file/');
+      if (isLocalFile || process.env.STORAGE_TYPE === 'local' || !process.env.STORAGE_TYPE) {
+        const fileName = doc.storageUrl
+          .replace(/^\/uploads\//, '')
+          .replace(/^\/api\/documents\/file\//, '');
+        // Try multiple possible locations
+        const candidates = [
+          path.resolve(process.cwd(), 'uploads', fileName),
+          path.resolve(process.cwd(), 'uploads', 'revit', fileName),
+        ];
+        const filePath = candidates.find(p => fs.existsSync(p));
 
-        if (!fs.existsSync(filePath)) {
-          return res.status(404).json({ error: 'File not found on disk' });
+        if (!filePath) {
+          return res.status(404).json({ error: 'File not found on disk', candidates });
         }
 
         res.setHeader('Content-Type', 'application/pdf');

@@ -63,6 +63,7 @@ interface PdfSidebarProps {
   jumpToPage?: (pageIndex: number) => void;
   numPages?: number;
   bookmarks?: any[];
+  bookmarksLoaded?: boolean;
   onJumpToBookmark?: (dest: any) => void;
   pdfData?: string;
   documentId?: string;
@@ -225,7 +226,7 @@ const PdfSidebar = memo(function PdfSidebar({
   searchScope = 'document', onSearchScopeChange,
   searchMode = 'contains', onSearchModeChange,
   activeSearchResultIndex, onSearchResultSelect, onHighlightAll,
-  numPages = 0, bookmarks = [], onJumpToBookmark, documentId, token, pdfData,
+  numPages = 0, bookmarks = [], bookmarksLoaded = false, onJumpToBookmark, documentId, token, pdfData,
   currentPage = 1, pageLabels = [],
   currentUserId, isAdmin = false,
   onBulkUpdateProperty,
@@ -287,12 +288,9 @@ const PdfSidebar = memo(function PdfSidebar({
         {tab === 0 && (
           <Box sx={{ p: 0 }}>
             {documentId && token ? (
+              numPages > 0 ? (
               <Box>
                 {(() => {
-                  // Build a sequential list of leaf bookmark titles as a fallback
-                  // when pageLabels hasn't been resolved yet (e.g. pdfjs still loading).
-                  // Only leaf nodes (no children) are real sheet names like "A101".
-                  // Parent containers like "Sheets" are skipped entirely.
                   const leafTitles: string[] = [];
                   const collectLeaves = (items: any[]) => {
                     for (const item of items) {
@@ -305,10 +303,6 @@ const PdfSidebar = memo(function PdfSidebar({
                   return Array.from(new Array(numPages), (_, i) => {
                     const pageNum = i + 1, isActive = currentPage === pageNum;
                     const rawLabel = pageLabels[i];
-                    // Priority:
-                    // 1) pageLabels[i] — resolved by pdfjs outline (most accurate, set async)
-                    // 2) leafTitles[i]  — sequential leaf bookmark names as fast fallback
-                    // 3) "Page N"       — last resort
                     let label: string;
                     if (rawLabel && rawLabel !== String(pageNum) && rawLabel.trim() !== '') {
                       label = rawLabel;
@@ -321,13 +315,63 @@ const PdfSidebar = memo(function PdfSidebar({
                   });
                 })()}
               </Box>
+              ) : (
+              /* Skeleton loader — matches exact LazyPageThumbnail layout */
+              <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                {[0,1,2,3,4].map(i => {
+                  const shimmer = {
+                    background: isDark
+                      ? 'linear-gradient(110deg, #2a2a2a 8%, #383838 18%, #2a2a2a 33%)'
+                      : 'linear-gradient(110deg, #e0e0e0 8%, #f0f0f0 18%, #e0e0e0 33%)',
+                    backgroundSize: '200% 100%',
+                    animation: 'skeletonShimmer 1.5s ease-in-out infinite',
+                    '@keyframes skeletonShimmer': { '0%': { backgroundPosition: '200% 0' }, '100%': { backgroundPosition: '-200% 0' } },
+                  };
+                  return (
+                    <Box key={i} sx={{
+                      py: 1.5, px: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.75,
+                      borderBottom: '1px solid rgba(0,0,0,0.04)',
+                    }}>
+                      {/* Thumbnail placeholder — same size as real: 130×90 */}
+                      <Box sx={{
+                        width: 130, height: 90, borderRadius: '4px',
+                        border: `1.5px solid ${theme.palette.divider}`,
+                        ...shimmer,
+                      }} />
+                      {/* Label placeholder */}
+                      <Box sx={{ width: `${70 + i * 5}%`, maxWidth: 130, height: 11, borderRadius: '3px', ...shimmer }} />
+                    </Box>
+                  );
+                })}
+              </Box>
+              )
             ) : <Box display="flex" justifyContent="center" p={4}><CircularProgress size={24} /></Box>}
           </Box>
         )}
 
         {tab === 1 && (
           <List>
-            {bookmarks.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>{t('noBookmarks', 'No bookmarks found.')}</Typography> : bookmarks.map((item, i) => <BookmarkItem key={i} item={item} onJump={(dest) => onJumpToBookmark?.(dest)} currentPage={currentPage || 1} pageLabels={pageLabels || []} />)}
+            {bookmarks.length > 0
+              ? bookmarks.map((item, i) => <BookmarkItem key={i} item={item} onJump={(dest) => onJumpToBookmark?.(dest)} currentPage={currentPage || 1} pageLabels={pageLabels || []} />)
+              : !bookmarksLoaded && documentId
+                ? /* Skeleton until bookmarks are actually loaded from pdfjs */
+                  [0,1,2,3,4,5,6].map(i => {
+                    const shimmer = {
+                      background: isDark
+                        ? 'linear-gradient(110deg, #2a2a2a 8%, #383838 18%, #2a2a2a 33%)'
+                        : 'linear-gradient(110deg, #e0e0e0 8%, #f0f0f0 18%, #e0e0e0 33%)',
+                      backgroundSize: '200% 100%',
+                      animation: 'skeletonShimmer 1.5s ease-in-out infinite',
+                      '@keyframes skeletonShimmer': { '0%': { backgroundPosition: '200% 0' }, '100%': { backgroundPosition: '-200% 0' } },
+                    };
+                    return (
+                      <Box key={i} sx={{ px: 1.5, py: 1.2, display: 'flex', alignItems: 'center', borderBottom: `1px solid ${theme.palette.divider}` }}>
+                        <Box sx={{ width: `${55 + i * 7}%`, height: 26, borderRadius: '4px', ...shimmer }} />
+                      </Box>
+                    );
+                  })
+                : <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>{t('noBookmarks', 'No bookmarks found.')}</Typography>
+            }
           </List>
         )}
 

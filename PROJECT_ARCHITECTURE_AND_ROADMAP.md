@@ -1,9 +1,11 @@
-# WISE SMART PDF: Architecture & Development Roadmap
+# WISE Smart PDF: Architecture & Development Roadmap
 
 ## 1. System Concept
+
 Cloud platform for collaborative work on construction PDF blueprints between engineers and clients. Separates the static PDF background from the intelligent markup layer (lines, properties, circuit schedules).
 
 ### Key Principles:
+
 - **Clean Branding:** Minimalist Wise branding. Favicon: "W" icon. No redundant text in headers.
 - **Client-Centric Interaction (Core Feature):** Lightning-fast communication. Clients can instantly open and view PDF drawings. They can leave mentions/comments triggering real-time notifications. Professionals can directly markup files provided by clients.
 - **Strict WebSocket-Only PDF Interaction:** All interactions within the context of a PDF file (creating/updating markups, adding comments, modifying properties, setting custom parameters, subject input) MUST go through WebSockets (`socket.io`) exclusively. REST APIs are completely forbidden for these actions to ensure ultra-low latency and real-time synchronization.
@@ -16,9 +18,11 @@ Cloud platform for collaborative work on construction PDF blueprints between eng
 - **Personalization:** DnD sort order, filters, view mode preserved per user.
 
 ### Permission Hierarchy (most specific wins):
+
 ```
 DocumentPermission → FolderPermission → ProjectAssignment → CompanyMembership role defaults
 ```
+
 - **GENERAL_ADMIN** — full access to everything, no checks
 - **Company Admin** (role.name === 'Admin') — full access within own company
 - **Other roles** — checked against ProjectAssignment / FolderPermission / DocumentPermission
@@ -28,6 +32,7 @@ DocumentPermission → FolderPermission → ProjectAssignment → CompanyMembers
 ---
 
 ## 2. Tech Stack
+
 - **Frontend:** React 19, Vite 8, MUI 7 (Responsive), TanStack React Query, react-i18next
 - **Backend:** Node.js, Express 5, Prisma 7, PostgreSQL
 - **Libraries:** `@hello-pangea/dnd` (DnD sorting), `react-pdf` + `Fabric.js` (PDF viewer + markup), Socket.io (real-time), `@microsoft/microsoft-graph-client` (OneDrive)
@@ -39,10 +44,12 @@ DocumentPermission → FolderPermission → ProjectAssignment → CompanyMembers
 ## 3. Data Model (Current → Target)
 
 ### Current Schema Issues:
+
 - `User.companyId` = single company FK (User can only be in ONE company)
 - `User.roleId` = single role FK (role is global, not per-company)
 
 ### Target: Multi-Company Model
+
 ```
 CompanyMembership (NEW join table):
   id, userId, companyId, roleId, joinedAt
@@ -62,15 +69,16 @@ Role:
 ```
 
 ### Current Models (working):
+
 - **Company** — id, name, projects[], roles[], tags[]
-- **Role** — id, name, color, isSystem, companyId, defaultCan* (6 booleans)
+- **Role** — id, name, color, isSystem, companyId, defaultCan\* (6 booleans)
 - **User** — id, email, name, googleId, systemRole, companyId(!), roleId(!), preferences, tags[]
 - **Project** — id, name, description, companyId
 - **Folder** — id, name, projectId, parentId (self-referencing tree), externalId (Cloud ID)
 - **Document** — id, name, storageUrl, version, isLatest, folderId, externalId (Cloud ID)
-- **ProjectAssignment** — userId, projectId, roleId, scope (FULL/SELECTIVE), 6x can* booleans
-- **FolderPermission** — userId, folderId, roleId, scope, 5x can* booleans
-- **DocumentPermission** — userId, documentId, roleId, 5x can* booleans
+- **ProjectAssignment** — userId, projectId, roleId, scope (FULL/SELECTIVE), 6x can\* booleans
+- **FolderPermission** — userId, folderId, roleId, scope, 5x can\* booleans
+- **DocumentPermission** — userId, documentId, roleId, 5x can\* booleans
 - **Invitation** — email, roleId, companyId, invitedById, token, status, projectIds[], expiresAt
 - **CompanyTag** — text, color, companyId, users[]
 - **Markup** — type, pageNumber, coordinates, properties, documentId, authorId
@@ -87,16 +95,19 @@ Role:
 ## 4. API Endpoints (Current)
 
 ### Auth
+
 - `GET /api/config` — Google client ID
 - `POST /api/auth/google` — Google OAuth login (auto GENERAL_ADMIN for super admin email)
 - `GET /api/auth/me` — Current user with company, role, assignedProjects
 
 ### Companies
+
 - `GET /api/companies` — All companies (GENERAL_ADMIN only)
 - `POST /api/companies` — Create company (auto-creates Admin/Worker/Client roles)
 - `GET /api/companies/my-company` — Current user's company data
 
 ### Projects
+
 - `GET /api/projects` — Projects (filtered by company/assignments)
 - `POST /api/projects` — Create project (requires companyId)
 - `GET /api/projects/:projectId` — Single project
@@ -106,6 +117,7 @@ Role:
 - `POST /api/projects/bulk/delete` — Bulk delete
 
 ### Folders
+
 - `GET /api/folders/tree?projectId=` — Folder tree for project
 - `GET /api/folders/root/:projectId` — Root folder of project
 - `GET /api/folders/:folderId/contents` — Folder children + documents
@@ -115,12 +127,14 @@ Role:
 - `POST /api/folders/bulk/delete` — Bulk delete
 
 ### Documents
+
 - `POST /api/documents` — Upload PDF (FormData: file + folderId)
 - `DELETE /api/documents/:id` — Delete document
 - `PUT /api/documents/:id/replace` — Upload new version
 - `POST /api/documents/bulk/delete` — Bulk delete
 
 ### Users
+
 - `GET /api/users` — Company users list
 - `GET /api/users/search?q=` — Search users across platform
 - `POST /api/users/:userId/add-to-company` — Add user to company
@@ -135,12 +149,14 @@ Role:
 - `POST /api/users/bulk/assign-projects` — Bulk assign to projects
 
 ### Tags
+
 - `GET /api/users/tags` — Company tags
 - `POST /api/users/tags` — Create tag
 - `DELETE /api/users/tags/:tagId` — Delete tag
 - `PATCH /api/users/:userId/tags` — Update user's tags
 
 ### Custom Roles
+
 - `GET /api/custom-roles` — Company roles list
 - `POST /api/custom-roles` — Create role
 - `PATCH /api/custom-roles/:id` — Update role
@@ -148,6 +164,7 @@ Role:
 - `PATCH /api/users/:userId/custom-role` — Assign role to user
 
 ### Invitations
+
 - `POST /api/invitations` — Create invitation (email, roleId, projectIds)
 - `GET /api/invitations` — List invitations
 - `DELETE /api/invitations/:id` — Cancel invitation
@@ -155,6 +172,7 @@ Role:
 - `POST /api/invitations/accept/:token` — Public: accept with Google credential
 
 ### Permissions (Folder/Document level)
+
 - `GET /api/permissions/folders/:folderId/permissions` — Folder permissions
 - `PUT /api/permissions/folders/:folderId/permissions/:userId` — Set folder permission
 - `DELETE /api/permissions/folders/:folderId/permissions/:userId` — Remove folder permission
@@ -162,12 +180,14 @@ Role:
 - `PUT /api/permissions/documents/:documentId/permissions/:userId` — Set document permission
 
 ### Markups
+
 - `GET /api/markups?documentId=` — Get markups for document
 - `POST /api/markups` — Create markup
 - `PATCH /api/markups/:id` — Update markup
 - `DELETE /api/markups/:id` — Delete markup
 
 ### Markup Property Presets
+
 - `GET /api/presets` — List presets for user's company
 - `POST /api/presets` — Create preset
 - `PATCH /api/presets/:id` — Update preset
@@ -175,6 +195,7 @@ Role:
 - `POST /api/presets/:id/apply` — Bulk-apply preset to all markups in a document
 
 ### Search
+
 - `GET /api/search?q=` — Global search (projects, folders, documents)
 
 ---
@@ -182,6 +203,7 @@ Role:
 ## 5. Frontend Pages & Components
 
 ### Pages:
+
 - **LoginPage** — Google OAuth login
 - **Dashboard** — Company card, projects grid (DnD sortable), create company/project dialogs, share/rename/delete project via 3-dot menu
 - **ProjectPage** — Folder tree sidebar, file manager (folders + documents grid), DnD sort, breadcrumbs, upload/create/rename/delete/share/replace, bulk operations toolbar
@@ -190,6 +212,7 @@ Role:
 - **DocumentViewPage** — PDF viewer with markup canvas
 
 ### Key Components:
+
 - **AppSidebar** — Navigation (Dashboard, Users for admins), folder tree when inside project
 - **FileManagerToolbar** — Search, sort, group, view mode toggle, create/upload buttons
 - **FolderCard / DocumentCard** — Grid/list items with context menu (rename, delete, share, replace)
@@ -208,6 +231,7 @@ Role:
 ## 6. Development Roadmap
 
 ### Stage 1: Infrastructure [COMPLETED]
+
 - [x] Docker + PostgreSQL + Prisma setup
 - [x] Vite + React + MUI project scaffold
 - [x] Google OAuth 2.0 authentication
@@ -217,6 +241,7 @@ Role:
 - [x] Responsive layout (desktop sidebar + mobile drawer)
 
 ### Stage 2: File Manager [COMPLETED]
+
 - [x] Company CRUD
 - [x] Project CRUD with company binding
 - [x] Folder tree (self-referencing parentId)
@@ -227,6 +252,7 @@ Role:
 - [x] Global search (projects, folders, documents)
 
 ### Stage 3: RBAC & User Management [COMPLETED]
+
 - [x] SystemRole enum (GENERAL_ADMIN, USER)
 - [x] Company-scoped Role model (Admin, Worker, Client + custom roles)
 - [x] Role CRUD with default permissions and color
@@ -248,6 +274,7 @@ Role:
 - [x] Super admin email always gets GENERAL_ADMIN
 
 ### Stage 3.5: Bug Fixes & API Audit [COMPLETED]
+
 - [x] Fix permissionMiddleware: `user.role` → `user.systemRole` + Role lookup
 - [x] Fix CompanyController: correct role checks, auto-create default roles
 - [x] Fix InvitationController: role string → roleId FK
@@ -266,6 +293,7 @@ Role:
 - [x] Add missing i18n keys (30+ keys: scope, search, sharing, errors, etc.)
 
 ### Stage 3.7: Pagination [COMPLETED]
+
 - [x] **Backend:** ProjectController.getProjects — page/limit/total/totalPages
 - [x] **Backend:** UserController.getUsers — page/limit/total/totalPages
 - [x] **Backend:** FolderController.getFolderContents — page/limit for documents (totalDocs/totalPages)
@@ -277,6 +305,7 @@ Role:
 - [x] **Frontend:** ProjectPage — MUI Pagination for documents in folder view
 
 ### Stage 4: Mini Bluebeam PDF Engine [COMPLETED]
+
 - [x] Full Engine Swap: Removed `@react-pdf-viewer`, implemented native `react-pdf` + `pdfjs-dist` wrapper.
 - [x] Native Scrolling: Fixed Continuous vs One Page scrolling using CSS native overflow.
 - [x] CRDT Real-time Sync: Integrated `Yjs` (y-websocket) for conflict-free collaborative editing.
@@ -287,6 +316,7 @@ Role:
 - [x] Duplicate Logic: Deep clone properties to ensure independent markup instances.
 
 ### Stage 5: Advanced Engineering [IN PROGRESS]
+
 - [x] **Responsive Design**: Full mobile/tablet support across all pages. Toolbar tool-collapsing (More menu), full-width sidebars on mobile.
 - [x] **Advanced UI**: Visual Line Style previews in dropdowns, hierarchical markup grouping (Author > Date).
 - [x] **Branding & Consistency**: Restored Gold Wise theme for toolbars and quick property selectors.
@@ -300,17 +330,22 @@ Role:
 ## 7. Key Architectural Concepts & Access Logic
 
 ### System vs. Custom Roles
+
 - **System Roles (`isSystem: true`)**: When a company is created, "Admin", "Worker", and "Client" are auto-generated. These cannot be deleted to ensure baseline roles always exist.
 - **Custom Roles**: Created by the General/Company Admin. A recent update enforces `@@unique([companyId, name])` so a single company cannot have duplicate role names.
 - **General Admin Scope**: A `GENERAL_ADMIN` oversees all companies. To prevent duplicate role UI issues, the backend (`/api/custom-roles`) requires a `companyId` context to fetch valid roles for assignment.
 
 ### The "Ghost Path" Logic
+
 When a user is granted selective access to a nested folder (e.g., `Root > Reports > Rev A`), they inherently need to navigate through the parent folders (`Root` and `Reports`).
+
 - **Backend**: `getFolderPermissions` uses `hasDescendantAccess` to detect if the user has access to any child document or folder. If yes, it returns `{ isGhost: true }` for that parent. The user can traverse the parent folder, but its other contents (unauthorized siblings) remain hidden.
 - **Frontend**: In the Selective Access Dialog, if a descendant is selected but the current folder is not explicitly selected, the checkbox displays as **indeterminate (`[-]`)**. This visually confirms the Ghost Path without tricking the Admin into fully checking it (which would accidentally grant full access).
 
 ### Comprehensive Audit Logging
-Audit logging captures **every single state mutation** across the application ensuring total traceability. 
+
+Audit logging captures **every single state mutation** across the application ensuring total traceability.
+
 - Actions tracked: `CREATE`, `RENAME/UPDATE`, `MOVE`, `DELETE`, `BULK_DELETE`, `DOWNLOAD`, `NEW_VERSION`
 - Entities tracked: `Project`, `Folder`, `Document`, `Markup`, `User`, `Role`, `Company`
 - Controller Integration: Direct instrumentation (`logAction`) inside every successful Prisma transaction.
@@ -320,6 +355,7 @@ Audit logging captures **every single state mutation** across the application en
 ## 8. File Manifest
 
 ### Backend Structure:
+
 ```
 backend/
 ├── prisma/
@@ -358,6 +394,7 @@ backend/
 ```
 
 ### Frontend Structure:
+
 ```
 frontend/src/
 ├── contexts/
@@ -422,9 +459,11 @@ frontend/src/
 ## 9. Conduit Schedule Specification
 
 ### Homerun Schedule Columns:
+
 `TAG ID`, `E1OSL`, `FROM`, `TO`, `LEVEL`, `AREA`, `CONDUIT SIZE`, `SERVICE TYPE`, `CKT# I` to `IX`, `PDF/BIM Length` (calculated), `Load Descriptions`, `Required Conduit Size`, `Conduit Type`, `Conduit Fill`, `Voltage Drop`, `Wire#`, `Derating`, `Max Amp`, `Phases`, `Circuits`, `Ph A/B/C`, `N`, `G`, `WIP Fields (Ph A/B/C, N, Circuits)`, `Min`.
 
 ### Key Integration Logic:
+
 1. **Source Data**: Homerun rows are combined from **Panel Schedule (PS)** circuits.
 2. **Project Context**: Panels and Schedules are unique per project (duplicate panel names allowed in different projects).
 3. **PDF Tagging**: Markups assigned a `TAG ID` automatically contribute their scaled length to the `PDF/BIM Length` column.
@@ -438,23 +477,27 @@ frontend/src/
 **Note:** In the absence of automated end-to-end tests, all verification is performed via systematic browser testing.
 
 ### PDF Viewer & Toolbar
+
 - [ ] **Tools Removal**: Verify `callout`, `polyline`, `stamp`, `measure-area` are removed from the toolbar.
 - [ ] **Shapes Select**: Dropdown contains all 8 shapes (Rectangle to Cross).
 - [ ] **Arrow Customization**: Start/End markers apply correctly to line ends.
 - [ ] **Version History**: Switch between versions and verify PDF binary reloads.
 
 ### Properties & Logic
+
 - [ ] **Auto-Open**: Select markup -> Panel opens. Deselect -> Panel closes.
 - [ ] **Scale Calibration**: Set scale (e.g., 1/4"=1'0") and verify Line measurements convert to Ft/In accurately.
 - [ ] **Search Persistence**: Type search term -> Switch to 'Markups' tab -> Switch back to 'Search' -> Results and keyword remain.
 
 ### UI & Layout
+
 - [ ] **Full Width**: Sidebar is always visible; PDF canvas utilizes all remaining width.
 - [ ] **Scroll Isolation**: Verify that scrolling the PDF doesn't cause the browser page to scroll away from the viewport.
 - [ ] **Responsive Design**: Test on Large Desktop, Laptop, and Tablet resolutions. Use Sidebar Toggle to hide/show bookmarks on small screens.
 - [ ] **Dark Theme**: Verify zoom %, dropdowns, and filter selects are perfectly legible.
 
 ### Performance & Collaboration
+
 - [ ] **Socket Sync**: Open same document in two tabs. Drawing in Tab 1 renders in Tab 2 instantly.
 - [ ] **Copy/Paste**: Select markup -> Ctrl+C -> Ctrl+V. A duplicate must appear in the correct coordinates.
 - [ ] **Archive/Restore**: Archive company -> Projects become inaccessible. Restore -> All data link integrity remains.
@@ -464,19 +507,22 @@ frontend/src/
 ## 11. External Cloud Integration: OneDrive Sync
 
 ### 11.1 Concept: "Shadow Mirroring"
+
 The application acts as a high-performance interactive interface over Microsoft OneDrive. It provides full real-time synchronization of folder structures and files, allowing users to work on the same data from both the "Mini Bluebeam" app and native Windows Explorer/OneDrive web interface.
 
 ### 11.2 Architectural Principles:
+
 1.  **Pluggable Provider:** Implementation of `OneDriveStorageProvider` extending `IStorageProvider`. Switchable via `.env`.
 2.  **Bidirectional Sync Strategy:**
-    *   **App → OneDrive:** Any action (folder creation, PDF upload) is instantly pushed via Microsoft Graph API.
-    *   **OneDrive → App:** Leverages **Microsoft Graph Webhooks (Subscriptions)**. The server listens for remote changes and updates the local Prisma database state.
-    *   **Delta Sync:** On user login or server startup, a "Delta Query" is executed to catch up on any missed changes.
+    - **App → OneDrive:** Any action (folder creation, PDF upload) is instantly pushed via Microsoft Graph API.
+    - **OneDrive → App:** Leverages **Microsoft Graph Webhooks (Subscriptions)**. The server listens for remote changes and updates the local Prisma database state.
+    - **Delta Sync:** On user login or server startup, a "Delta Query" is executed to catch up on any missed changes.
 3.  **Virtual Tree:** `Folder` and `Document` models are extended with an `externalId` field to map local records to OneDrive Item IDs.
 
 ### 11.4 Permissions & Governance
+
 **OneDrive is strictly a storage and structure backend.**
+
 1.  **Governance Override:** The application's existing Permission Hierarchy (Company -> Project -> Folder -> Document) remains the absolute source of truth. Even if a folder exists in OneDrive, a user will NOT see it in the app unless they have explicit or inherited permissions in the local PostgreSQL database.
 2.  **No Direct OneDrive Access for Clients:** Clients and external workers interact only through the "Mini Bluebeam" interface. They do not need (and should not have) direct access to the underlying OneDrive folder. The backend acts as a security gatekeeper, proxying requests and enforcing the application's RBAC.
 3.  **Isolation:** Multi-company isolation is maintained by the app. OneDrive just provides the physical hierarchy mirrored by `externalId` links.
-

@@ -168,7 +168,7 @@ const DocumentRow = forwardRef<HTMLTableRowElement, DocumentRowProps>(({
         )}
         <MenuItem onClick={() => { handleMenuClose(); onShowVersions?.(docItem.id, docItem.name); }}>
           <HistoryIcon fontSize="small" sx={{ mr: 1 }} />
-          {t('versions', 'Versions History')}
+          {t('versions', 'Version History')}
         </MenuItem>
         {canManage && onShare && (
           <MenuItem onClick={() => { handleMenuClose(); onShare(docItem.id, docItem.name); }}>

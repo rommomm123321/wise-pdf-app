@@ -32,6 +32,9 @@ const io = new Server(httpServer, {
   destroyUpgrade: false,
 });
 
+// Make io accessible via req.app.get('io') in routes/controllers
+app.set('io', io);
+
 app.use(cors({
   origin: true,
   credentials: true,
@@ -317,6 +320,11 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api/revit", revitRoutes);
 app.use("/api", reviewRoutes);
 app.use("/api/documents/:documentId/markup-history", markupHistoryRoutes);
+// Review Assignments + Upload Presets
+const reviewAssignmentRoutes = require("./src/routes/reviewAssignmentRoutes");
+const uploadPresetRoutes = require("./src/routes/uploadPresetRoutes");
+app.use("/api", reviewAssignmentRoutes);
+app.use("/api/upload-presets", uploadPresetRoutes);
 
 // OneDrive background sync
 if (process.env.ONEDRIVE_SYNC_ENABLED !== 'false') {

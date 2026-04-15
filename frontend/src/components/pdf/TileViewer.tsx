@@ -796,12 +796,10 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
   const screenDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
 
   const getZoomLevel = useCallback((zoom: number): number => {
-    // Choose tile zoom level so tiles are NEVER visually upscaled on screen.
-    // upscale ratio = zoom × DPR / scale — must be ≤ 1.0 for zero upscale.
-    // This means scale ≥ zoom × DPR — always request enough pixels.
-    const needed = zoom * screenDpr;
+    // 2× SUPERSAMPLING: request tiles at DOUBLE the needed resolution.
+    // Browser downscales via drawImage with imageSmoothingQuality:'high' → crisp text.
+    const needed = zoom * screenDpr * 2; // ×2 = supersample
     // scales: [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
-    // Each level's max "needed" = its scale value (upscale ratio exactly 1.0)
     let level: number;
     if (needed <= 0.25) level = 0;
     else if (needed <= 0.5)  level = 1;
@@ -1090,8 +1088,10 @@ const TileViewer = forwardRef<TileViewerHandle, TileViewerProps>(function TileVi
     const tileScale = getScaleForLevel(level);
     const effectiveZoom = vp.zoom * dpr;
     const upscaleRatio = effectiveZoom / tileScale;
-    ctx.imageSmoothingEnabled = upscaleRatio > 1.05;
-    if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = 'high';
+    // Always enable high-quality smoothing — essential for 2× supersampling downscale
+    // (without this, downscaled tiles use nearest-neighbor → pixelated instead of crisp)
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     // Draw actual tiles with fade-in; pyramid fallback for missing tiles
     for (const t of tiles) {

@@ -21,17 +21,39 @@ export default function NotificationBell() {
   const theme = useTheme();
   const gold = theme.palette.primary.main;
   const navigate = useNavigate();
-  const { notifications, unreadCount, markRead, markAllRead, deleteOne, deleteAll } = useNotifications();
+  const { notifications, unreadCount, markRead, markAllRead, deleteOne, deleteAll, respondToAssignment } = useNotifications();
 
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [respondedIds, setRespondedIds] = useState<Set<string>>(new Set());
 
   const handleOpen = (e: React.MouseEvent<HTMLElement>) => setAnchor(e.currentTarget);
   const handleClose = () => setAnchor(null);
 
-  const handleClick = useCallback((n: AppNotification) => {
+  const handleClick = useCallback(async (n: AppNotification) => {
     if (!n.read) markRead(n.id);
-    handleClose();
-    navigate(`/projects/${n.projectId}/documents/${n.documentId}?markupId=${n.markupId}`);
+    if (n.documentId) {
+      const params = n.markupId ? `?markupId=${n.markupId}` : '';
+      let projectId = n.projectId;
+      if (!projectId) {
+        try {
+          const res = await fetch(`/api/documents/${n.documentId}/info`, { credentials: 'include' });
+          if (res.ok) {
+            const data = await res.json();
+            projectId = data.folder?.projectId || data.projectId;
+          }
+        } catch { /* */ }
+      }
+      // Close popover AFTER we have the URL ready, then navigate
+      handleClose();
+      if (projectId) {
+        navigate(`/projects/${projectId}/documents/${n.documentId}${params}`);
+      } else {
+        // Last resort: use window.location for hard navigation
+        window.location.href = `/projects/_/documents/${n.documentId}${params}`;
+      }
+    } else {
+      handleClose();
+    }
   }, [navigate, markRead]);
 
   const actorLabel = (n: AppNotification) => n.actor?.name || n.actor?.email || 'Someone';
@@ -200,14 +222,68 @@ const open = Boolean(anchor);
 
                     {/* Content */}
                     <Box flex={1} minWidth={0}>
+                      {/* Message based on notification type */}
                       <Typography fontSize="0.75rem" lineHeight={1.45} color="text.primary">
                         <Box component="span" fontWeight={700} color={color}>{actor}</Box>
-                        <Box component="span" color="text.primary" sx={{ opacity: 0.75 }}> mentioned you in </Box>
-                        <Box component="span" fontWeight={600} sx={{ color: gold }}>{n.documentName || 'a document'}</Box>
+                        {(!n.type || n.type === 'mention') && (
+                          <>
+                            <Box component="span" sx={{ opacity: 0.75 }}> mentioned you in </Box>
+                            <Box component="span" fontWeight={600} sx={{ color: gold }}>{n.documentName || 'a document'}</Box>
+                          </>
+                        )}
+                        {n.type === 'review_request' && (
+                          <>
+                            <Box component="span" sx={{ opacity: 0.75 }}> assigned you to review </Box>
+                            <Box component="span" fontWeight={600} sx={{ color: gold }}>{n.documentName || 'a document'}</Box>
+                          </>
+                        )}
+                        {n.type === 'review_approved' && (
+                          <>
+                            <Box component="span" sx={{ color: '#4caf50' }}> approved </Box>
+                            <Box component="span" fontWeight={600} sx={{ color: gold }}>{n.documentName || 'a document'}</Box>
+                            <Box component="span" sx={{ opacity: 0.75 }}> — ready to print</Box>
+                          </>
+                        )}
+                        {n.type === 'review_rejected' && (
+                          <>
+                            <Box component="span" sx={{ color: '#f44336' }}> found issues in </Box>
+                            <Box component="span" fontWeight={600} sx={{ color: gold }}>{n.documentName || 'a document'}</Box>
+                            <Box component="span" sx={{ opacity: 0.75 }}> — needs corrections</Box>
+                          </>
+                        )}
                       </Typography>
+                      {n.message && n.type !== 'mention' && (
+                        <Typography fontSize="0.68rem" color="text.secondary" sx={{ mt: 0.2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          "{n.message}"
+                        </Typography>
+                      )}
                       <Typography variant="caption" color="text.secondary" fontSize="0.62rem" display="block" mt={0.3}>
                         {timeAgo}
                       </Typography>
+                      {/* Action buttons for review assignments — hidden after response or if already responded (persisted) */}
+                      {n.type === 'review_request' && n.assignmentId && !respondedIds.has(n.assignmentId) && (!n.assignmentStatus || n.assignmentStatus === 'pending') && (
+                        <Box display="flex" gap={0.75} mt={0.75}>
+                          <Button
+                            size="small" variant="outlined" color="error"
+                            sx={{ fontSize: '0.65rem', py: 0.25, px: 1, textTransform: 'none', borderRadius: '6px' }}
+                            onClick={(e) => { e.stopPropagation(); setRespondedIds(prev => new Set(prev).add(n.assignmentId!)); respondToAssignment(n.assignmentId!, 'has_markups'); markRead(n.id); }}
+                          >
+                            Has markups — fix
+                          </Button>
+                          <Button
+                            size="small" variant="contained"
+                            sx={{ fontSize: '0.65rem', py: 0.25, px: 1, textTransform: 'none', borderRadius: '6px', bgcolor: '#4caf50', '&:hover': { bgcolor: '#388e3c' } }}
+                            onClick={(e) => { e.stopPropagation(); setRespondedIds(prev => new Set(prev).add(n.assignmentId!)); respondToAssignment(n.assignmentId!, 'approved'); markRead(n.id); }}
+                          >
+                            Approve
+                          </Button>
+                        </Box>
+                      )}
+                      {n.type === 'review_request' && n.assignmentId && (respondedIds.has(n.assignmentId) || (n.assignmentStatus && n.assignmentStatus !== 'pending')) && (
+                        <Typography fontSize="0.65rem" color={n.assignmentStatus === 'approved' ? '#4caf50' : n.assignmentStatus === 'has_markups' ? '#f44336' : 'text.disabled'} mt={0.5} fontStyle="italic">
+                          {n.assignmentStatus === 'approved' ? '✅ Approved' : n.assignmentStatus === 'has_markups' ? '❌ Has markups — needs fix' : 'Response sent'}
+                        </Typography>
+                      )}
                     </Box>
 
                     {/* Actions */}

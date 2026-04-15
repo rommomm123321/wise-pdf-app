@@ -29,4 +29,4 @@ COPY --from=frontend-builder /app/frontend/dist ./public
 EXPOSE 3030
 
 # Запускаем миграции Prisma и затем сервер
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+CMD ["sh", "-c", "sleep 5 && npx prisma migrate deploy && node server.js"]

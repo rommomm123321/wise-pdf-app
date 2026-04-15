@@ -8,7 +8,7 @@ const resources = {
       uploadingFiles: "Uploading files...",
       download: "Download",
       uploadNewVersion: "Upload New Version",
-      appName: "WISE SMART PDF",
+      appName: "WISE Smart PDF",
       appDescription: "Intelligent platform for PDF collaboration",
       welcome: "Welcome, {{name}}!",
       email: "Email",
@@ -280,7 +280,7 @@ const resources = {
   },
   uk: {
     translation: {
-      appName: "WISE SMART PDF",
+      appName: "WISE Smart PDF",
       appDescription: "Інтелектуальна платформа для роботи з PDF",
       welcome: "Вітаємо, {{name}}!",
       email: "Email",
@@ -556,7 +556,7 @@ const resources = {
   },
   ru: {
     translation: {
-      appName: "WISE SMART PDF",
+      appName: "WISE Smart PDF",
       appDescription: "Интеллектуальная платформа для работы с PDF",
       welcome: "Добро пожаловать, {{name}}!",
       email: "Email",
@@ -807,16 +807,14 @@ const resources = {
   },
 };
 
-i18n
-  .use(initReactI18next)
-  .init({
-    resources,
-    lng: "en",          // force English — no browser detection
-    fallbackLng: "en",
-    debug: false,
-    interpolation: {
-      escapeValue: false,
-    },
-  });
+i18n.use(initReactI18next).init({
+  resources,
+  lng: "en", // force English — no browser detection
+  fallbackLng: "en",
+  debug: false,
+  interpolation: {
+    escapeValue: false,
+  },
+});
 
 export default i18n;

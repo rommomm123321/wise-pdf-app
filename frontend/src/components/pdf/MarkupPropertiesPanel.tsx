@@ -313,8 +313,10 @@ const MarkupPropertiesPanel = memo(function MarkupPropertiesPanel({
   const hasFillOpacity = hasFill;
   const hasLineStyle = !['pen', 'highlighter', 'text'].includes(markupType || '') || isMulti;
   const hasStrokeWidth = !['text'].includes(markupType || '') || isMulti || (markupType === 'text');
+  // Font Size: for text/callout/stickyNote in main section; reviewStamp/electrical have their own dedicated section below
   const hasFontSize = ['text', 'callout', 'stickyNote'].includes(markupType || '') || isMulti;
-  const hasTextColor = ['text', 'callout'].includes(markupType || '') || isMulti;
+  // Text Color: for text/callout/stickyNote in the main section; reviewStamp/electrical have their own dedicated section below
+  const hasTextColor = ['text', 'callout', 'stickyNote'].includes(markupType || '') || isMulti;
   const isTextType = markupType === 'text' && !isMulti;
 
   const sectionSx = { px: 1.5, py: 1.5, width: '100%', boxSizing: 'border-box' };

@@ -37,17 +37,19 @@ const PERMISSION_KEYS = [
   'defaultCanEdit',
   'defaultCanDelete',
   'defaultCanDownload',
+  'defaultCanUpload',
   'defaultCanMarkup',
   'defaultCanManage',
 ] as const;
 
 const PERM_LABELS: Record<string, string> = {
-  defaultCanView: 'canView',
-  defaultCanEdit: 'canEdit',
-  defaultCanDelete: 'canDelete',
-  defaultCanDownload: 'canDownload',
-  defaultCanMarkup: 'canMarkup',
-  defaultCanManage: 'canManage',
+  defaultCanView: 'View',
+  defaultCanEdit: 'Edit',
+  defaultCanDelete: 'Delete',
+  defaultCanDownload: 'Download',
+  defaultCanUpload: 'Upload',
+  defaultCanMarkup: 'Markup',
+  defaultCanManage: 'Manage',
 };
 
 const COLORS = ['#F44336', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50', '#FF9800', '#795548', '#607D8B'];
@@ -72,6 +74,7 @@ export default function CustomRoleDialog({ open, onClose }: CustomRoleDialogProp
     defaultCanEdit: false,
     defaultCanDelete: false,
     defaultCanDownload: true,
+    defaultCanUpload: true,
     defaultCanMarkup: false,
     defaultCanManage: false,
   });
@@ -81,7 +84,7 @@ export default function CustomRoleDialog({ open, onClose }: CustomRoleDialogProp
     setColor(COLORS[0]);
     setPerms({
       defaultCanView: true, defaultCanEdit: false, defaultCanDelete: false,
-      defaultCanDownload: true, defaultCanMarkup: false, defaultCanManage: false,
+      defaultCanDownload: true, defaultCanUpload: true, defaultCanMarkup: false, defaultCanManage: false,
     });
     setEditing(null);
     setCreating(false);
@@ -101,6 +104,7 @@ export default function CustomRoleDialog({ open, onClose }: CustomRoleDialogProp
       defaultCanEdit: role.defaultCanEdit,
       defaultCanDelete: role.defaultCanDelete,
       defaultCanDownload: role.defaultCanDownload,
+      defaultCanUpload: role.defaultCanUpload ?? true,
       defaultCanMarkup: role.defaultCanMarkup,
       defaultCanManage: role.defaultCanManage,
     });
@@ -223,7 +227,7 @@ export default function CustomRoleDialog({ open, onClose }: CustomRoleDialogProp
             <Box sx={{ bgcolor: 'action.hover', p: 1.5, borderRadius: 1, mb: 2 }}>
               {PERMISSION_KEYS.map((key) => (
                 <Box key={key} display="flex" alignItems="center" justifyContent="space-between" py={0.5}>
-                  <Typography variant="body2">{t(PERM_LABELS[key])}</Typography>
+                  <Typography variant="body2">{PERM_LABELS[key]}</Typography>
                   <Switch
                     size="small"
                     checked={perms[key]}

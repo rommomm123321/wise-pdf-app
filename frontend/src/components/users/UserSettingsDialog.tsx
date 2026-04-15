@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, Typography, Box, Slider,
+  Dialog, DialogTitle, DialogContent, Typography, Box, Slider, TextField,
   Select, MenuItem, Switch, ToggleButtonGroup, ToggleButton,
   useTheme, useMediaQuery, alpha, IconButton,
 } from '@mui/material';
@@ -12,6 +12,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import TuneIcon from '@mui/icons-material/Tune';
 import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
 import GroupsIcon from '@mui/icons-material/Groups';
+import NotificationsIcon from '@mui/icons-material/Notifications';
 // Tool icons
 import AdsClickIcon from '@mui/icons-material/AdsClick';
 import CreateIcon from '@mui/icons-material/Create';
@@ -287,7 +288,7 @@ export default function UserSettingsDialog({ open, onClose, user, presets = [], 
         </Row>
 
         {/* ── QUICK WHEEL — Dota-style slot editor ── */}
-        {canMarkup && <Section icon={<TuneIcon />} title="Quick Wheel (Q / Middle Click)" />}
+        {canMarkup && <Section icon={<TuneIcon />} title="Quick Wheel (Q)" />}
 
         {canMarkup && (() => {
           const ALL_TOOLS = [
@@ -484,6 +485,29 @@ export default function UserSettingsDialog({ open, onClose, user, presets = [], 
 
         <Row label="Auto-import annotations" sub="Import Bluebeam/Acrobat markups on first open">
           <Switch checked={s.autoImportAnnotations} onChange={(_, v) => set({ autoImportAnnotations: v })} size="small" sx={swSx} />
+        </Row>
+
+        <Section icon={<NotificationsIcon />} title="Notifications" />
+
+        <Row label="In-app notifications" sub="Bell icon notifications on the website">
+          <Switch checked={(s as any).notifyInApp !== false} onChange={(_, v) => set({ notifyInApp: v } as any)} size="small" sx={swSx} />
+        </Row>
+
+        <Row label="Microsoft Teams" sub="Paste your Teams Incoming Webhook URL">
+          <TextField
+            size="small"
+            placeholder="https://outlook.office.com/webhook/..."
+            value={(s as any).teamsWebhookUrl || ''}
+            onChange={(e) => set({ teamsWebhookUrl: e.target.value } as any)}
+            onBlur={(e) => {
+              const url = e.target.value;
+              fetch('/api/users/me/preferences', {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+                body: JSON.stringify({ notifications: { teamsWebhookUrl: url, inTeams: !!url } }),
+              }).catch(() => {});
+            }}
+            sx={{ width: 220, '& .MuiInputBase-root': { height: 28, fontSize: '0.75rem' } }}
+          />
         </Row>
 
       </DialogContent>

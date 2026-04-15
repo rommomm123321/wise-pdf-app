@@ -174,7 +174,9 @@ const TOOL_CHEST_TYPE_ICONS: Record<string, React.ReactNode> = {
   arrow: <EastIcon sx={{ fontSize: 16 }} />,
   text: <TextFormatIcon sx={{ fontSize: 16 }} />,
   circle: <CircleOutlinedIcon sx={{ fontSize: 16 }} />,
-  ellipse: <CircleOutlinedIcon sx={{ fontSize: 16, transform: 'scaleX(1.4)' }} />,
+  ellipse: (
+    <CircleOutlinedIcon sx={{ fontSize: 16, transform: "scaleX(1.4)" }} />
+  ),
   cloud: <CloudQueueIcon sx={{ fontSize: 16 }} />,
   pen: <CreateIcon sx={{ fontSize: 16 }} />,
   highlighter: <HighlightIcon sx={{ fontSize: 16 }} />,
@@ -194,20 +196,24 @@ const TOOL_CHEST_TYPE_ICONS: Record<string, React.ReactNode> = {
 
 /** Extract markupType from a preset (stored as special __markupType__ field entry) */
 function getPresetMarkupType(preset: any): string | undefined {
-  const entry = (preset.fields || []).find((f: any) => f.key === '__markupType__');
+  const entry = (preset.fields || []).find(
+    (f: any) => f.key === "__markupType__",
+  );
   return entry?.defaultValue || preset.markupType || undefined;
 }
 
 /** Get displayable fields (exclude the __markupType__ meta entry) */
 function getPresetDisplayFields(preset: any): any[] {
-  return (preset.fields || []).filter((f: any) => f.key !== '__markupType__' && f.key !== '__customStamp__');
+  return (preset.fields || []).filter(
+    (f: any) => f.key !== "__markupType__" && f.key !== "__customStamp__",
+  );
 }
 
 /** Generate 1-2 letter initials from a name */
 function getNameInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  const w = words[0] || '?';
+  const w = words[0] || "?";
   if (w.length <= 2) return w.toUpperCase();
   // Use first + first consonant after that
   const consonants = w.slice(1).match(/[bcdfghjklmnpqrstvwxyz]/i);
@@ -215,10 +221,24 @@ function getNameInitials(name: string): string {
 }
 
 /** Deterministic color from string hash */
-const PRESET_COLORS = ['#e91e63','#9c27b0','#673ab7','#3f51b5','#2196f3','#00bcd4','#009688','#4caf50','#ff9800','#ff5722','#795548','#607d8b'];
+const PRESET_COLORS = [
+  "#e91e63",
+  "#9c27b0",
+  "#673ab7",
+  "#3f51b5",
+  "#2196f3",
+  "#00bcd4",
+  "#009688",
+  "#4caf50",
+  "#ff9800",
+  "#ff5722",
+  "#795548",
+  "#607d8b",
+];
 function getNameColor(name: string): string {
   let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+  for (let i = 0; i < name.length; i++)
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
   return PRESET_COLORS[Math.abs(hash) % PRESET_COLORS.length];
 }
 
@@ -352,6 +372,7 @@ interface PdfToolbarProps {
   onExportPdf?: () => void;
   isExporting?: boolean;
   onDownloadClean?: () => void;
+  pdfLoaded?: boolean;
   pageMarkupCount?: number;
   embeddedAnnotCount?: number;
   onImportAnnotations?: () => void;
@@ -364,8 +385,10 @@ interface PdfToolbarProps {
   onApplyDrafts?: () => void;
   onDiscardDrafts?: () => void;
   // ─── Collaboration Mode ───
-  collabMode?: 'personal' | 'live' | 'edit' | 'draft' | 'qaqc';
-  onCollabModeChange?: (mode: 'personal' | 'live' | 'edit' | 'draft' | 'qaqc') => void;
+  collabMode?: "personal" | "live" | "edit" | "draft" | "qaqc";
+  onCollabModeChange?: (
+    mode: "personal" | "live" | "edit" | "draft" | "qaqc",
+  ) => void;
   editLockUser?: { id: string; name: string } | null;
   connectedUsers?: Array<{ id: string; name: string; color: string }>;
   personalMarkupCount?: number;
@@ -380,7 +403,12 @@ interface PdfToolbarProps {
   onToggleQaqc?: () => void;
   spellErrorCount?: number;
   // Tool Chest
-  presets?: Array<{ id: string; name: string; markupType?: string; fields: Array<{ key: string; defaultValue: string; type?: string }> }>;
+  presets?: Array<{
+    id: string;
+    name: string;
+    markupType?: string;
+    fields: Array<{ key: string; defaultValue: string; type?: string }>;
+  }>;
   onApplyPreset?: (preset: any) => void;
   onDeletePreset?: (presetId: string) => void;
   propertiesHidden?: boolean;
@@ -404,6 +432,8 @@ interface PdfToolbarProps {
     onDetectChanges?: () => void;
     isDetecting?: boolean;
     onClose: () => void;
+    showMarkups?: boolean;
+    onToggleMarkups?: () => void;
   } | null;
 }
 
@@ -776,6 +806,7 @@ const PdfToolbar = memo(function PdfToolbar({
   onExportPdf,
   isExporting = false,
   onDownloadClean,
+  pdfLoaded = true,
   pageMarkupCount = 0,
   embeddedAnnotCount = 0,
   onImportAnnotations,
@@ -795,7 +826,7 @@ const PdfToolbar = memo(function PdfToolbar({
   onToggleQaqcPanel,
   spellErrorCount = 0,
   compareControls,
-  collabMode = 'personal',
+  collabMode = "personal",
   onCollabModeChange,
   editLockUser,
   connectedUsers = [],
@@ -818,7 +849,7 @@ const PdfToolbar = memo(function PdfToolbar({
   // Breakpoints: progressive collapse
   const isXS = useMediaQuery("(max-width:650px)");
   const isSM = useMediaQuery("(max-width:1150px)");
-  const isMD = useMediaQuery("(max-width:1920px)");
+  const isMD = useMediaQuery("(max-width:1950px)");
   // Bottom bar visible at ≤1050px — hide scale/version/download from toolbar to avoid duplication
   const isBottomBarVisible = useMediaQuery("(max-width:1050px)");
   // Hide right-side heavy items earlier to prevent overflow
@@ -826,8 +857,12 @@ const PdfToolbar = memo(function PdfToolbar({
 
   const [pageInput, setPageInput] = useState(currentPage.toString());
   const [localColor, setLocalColor] = useState(activeColor);
-  const [collabAnchorEl, setCollabAnchorEl] = useState<HTMLElement | null>(null);
-  const [downloadAnchor, setDownloadAnchor] = useState<null | HTMLElement>(null);
+  const [collabAnchorEl, setCollabAnchorEl] = useState<HTMLElement | null>(
+    null,
+  );
+  const [downloadAnchor, setDownloadAnchor] = useState<null | HTMLElement>(
+    null,
+  );
   useEffect(() => {
     setLocalColor(activeColor);
   }, [activeColor]);
@@ -850,7 +885,9 @@ const PdfToolbar = memo(function PdfToolbar({
   const [customizeAnchor, setCustomizeAnchor] = useState<null | HTMLElement>(
     null,
   );
-  const [toolChestAnchor, setToolChestAnchor] = useState<null | HTMLElement>(null);
+  const [toolChestAnchor, setToolChestAnchor] = useState<null | HTMLElement>(
+    null,
+  );
 
   // Toolbar customization: which tools are visible
   const [hiddenTools, setHiddenTools] = useState<string[]>(() => {
@@ -1282,6 +1319,24 @@ const PdfToolbar = memo(function PdfToolbar({
           </IconButton>
         </Tooltip>
       )}
+
+      {/* Tool Chest — right after Electrical Elements */}
+      {canMarkup && (
+        <Tooltip title="Tool Chest">
+          <IconButton
+            size="small"
+            onClick={(e) => setToolChestAnchor(e.currentTarget)}
+            sx={{
+              ...btnSx,
+              ...(Boolean(toolChestAnchor)
+                ? { bgcolor: alpha(gold, 0.12), color: gold }
+                : {}),
+            }}
+          >
+            <ConstructionIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      )}
     </Box>
   ) : null;
 
@@ -1434,15 +1489,7 @@ const PdfToolbar = memo(function PdfToolbar({
         </IconButton>
       </Tooltip>
 
-      {/* Tool Chest — custom markup presets */}
-      {canMarkup && (
-        <Tooltip title="Tool Chest">
-          <IconButton size="small" onClick={(e) => setToolChestAnchor(e.currentTarget)}
-            sx={{ ...btnSx, ...(Boolean(toolChestAnchor) ? { bgcolor: alpha(gold, 0.12), color: gold } : {}) }}>
-            <ConstructionIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      )}
+      {/* Tool Chest moved to drawingContent — right after Electrical Elements */}
 
       {/* Undo / Redo */}
       {canMarkup && (
@@ -1479,7 +1526,11 @@ const PdfToolbar = memo(function PdfToolbar({
         <>
           <Divider orientation="vertical" flexItem sx={dividerSx} />
           <Tooltip title="Download">
-            <IconButton size="small" sx={btnSx} onClick={(e) => setDownloadAnchor(e.currentTarget)}>
+            <IconButton
+              size="small"
+              sx={btnSx}
+              onClick={(e) => setDownloadAnchor(e.currentTarget)}
+            >
               <DownloadIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -1492,40 +1543,128 @@ const PdfToolbar = memo(function PdfToolbar({
             slotProps={{
               paper: {
                 sx: {
-                  mt: 1, borderRadius: "12px", minWidth: 220,
+                  mt: 1,
+                  borderRadius: "12px",
+                  minWidth: 220,
                   boxShadow: `0 8px 32px rgba(0,0,0,0.2)`,
                   overflow: "hidden",
                 },
               },
             }}
           >
-            <Box sx={{ px: 1.5, py: 0.8, borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`, bgcolor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)" }}>
-              <Typography sx={{ fontSize: "0.6rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, color: alpha(gold, 0.7) }}>
+            <Box
+              sx={{
+                px: 1.5,
+                py: 0.8,
+                borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                bgcolor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
+              }}
+            >
+              <Typography
+                sx={{
+                  fontSize: "0.6rem",
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.6,
+                  color: alpha(gold, 0.7),
+                }}
+              >
                 DOWNLOAD
               </Typography>
             </Box>
             <Box sx={{ py: 0.5 }}>
               {onDownloadClean && (
-                <Box onClick={() => { onDownloadClean(); setDownloadAnchor(null); }}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1, cursor: 'pointer', '&:hover': { bgcolor: alpha(gold, 0.08) }, transition: 'background 0.15s' }}>
-                  <Box sx={{ width: 32, height: 32, borderRadius: '8px', bgcolor: alpha('#4caf50', 0.12), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <DownloadIcon sx={{ fontSize: 18, color: '#4caf50' }} />
+                <Box
+                  onClick={() => {
+                    if (!pdfLoaded) return;
+                    onDownloadClean();
+                    setDownloadAnchor(null);
+                  }}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1.5,
+                    px: 1.5,
+                    py: 1,
+                    cursor: pdfLoaded ? "pointer" : "not-allowed",
+                    opacity: pdfLoaded ? 1 : 0.4,
+                    "&:hover": pdfLoaded ? { bgcolor: alpha(gold, 0.08) } : {},
+                    transition: "background 0.15s",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: "8px",
+                      bgcolor: alpha("#4caf50", 0.12),
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <DownloadIcon sx={{ fontSize: 18, color: "#4caf50" }} />
                   </Box>
                   <Box>
-                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 600 }}>Clean PDF</Typography>
-                    <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary' }}>Original without markups</Typography>
+                    <Typography sx={{ fontSize: "0.82rem", fontWeight: 600 }}>
+                      Clean PDF
+                    </Typography>
+                    <Typography
+                      sx={{ fontSize: "0.68rem", color: "text.secondary" }}
+                    >
+                      Original without markups
+                    </Typography>
                   </Box>
                 </Box>
               )}
               {onExportPdf && (
-                <Box onClick={() => { if (!isExporting) { onExportPdf(); setDownloadAnchor(null); } }}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1, cursor: isExporting ? 'wait' : 'pointer', opacity: isExporting ? 0.5 : 1, '&:hover': { bgcolor: isExporting ? undefined : alpha(gold, 0.08) }, transition: 'background 0.15s' }}>
-                  <Box sx={{ width: 32, height: 32, borderRadius: '8px', bgcolor: alpha(gold, 0.12), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {isExporting ? <CircularProgress size={16} sx={{ color: gold }} /> : <LayersIcon sx={{ fontSize: 18, color: gold }} />}
+                <Box
+                  onClick={() => {
+                    if (!isExporting && pdfLoaded) {
+                      onExportPdf();
+                      setDownloadAnchor(null);
+                    }
+                  }}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1.5,
+                    px: 1.5,
+                    py: 1,
+                    cursor: isExporting ? "wait" : !pdfLoaded ? "not-allowed" : "pointer",
+                    opacity: (isExporting || !pdfLoaded) ? 0.4 : 1,
+                    "&:hover": {
+                      bgcolor: (isExporting || !pdfLoaded) ? undefined : alpha(gold, 0.08),
+                    },
+                    transition: "background 0.15s",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: "8px",
+                      bgcolor: alpha(gold, 0.12),
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {isExporting ? (
+                      <CircularProgress size={16} sx={{ color: gold }} />
+                    ) : (
+                      <LayersIcon sx={{ fontSize: 18, color: gold }} />
+                    )}
                   </Box>
                   <Box>
-                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 600 }}>{isExporting ? 'Exporting...' : 'With Markups'}</Typography>
-                    <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary' }}>PDF with all annotations baked in</Typography>
+                    <Typography sx={{ fontSize: "0.82rem", fontWeight: 600 }}>
+                      {isExporting ? "Exporting..." : "With Markups"}
+                    </Typography>
+                    <Typography
+                      sx={{ fontSize: "0.68rem", color: "text.secondary" }}
+                    >
+                      PDF with all annotations baked in
+                    </Typography>
                   </Box>
                 </Box>
               )}
@@ -1534,24 +1673,16 @@ const PdfToolbar = memo(function PdfToolbar({
         </>
       )}
 
-      {/* Import Bluebeam annotations button */}
-      {onImportAnnotations && embeddedAnnotCount > 0 && (
-        <Tooltip title={isImporting ? 'Importing...' : `Import ${embeddedAnnotCount} Bluebeam annotation${embeddedAnnotCount !== 1 ? 's' : ''}`}>
-          <span>
-            <IconButton size="small" sx={{ ...btnSx, color: '#ff9800', position: 'relative' }} onClick={onImportAnnotations} disabled={isImporting}>
-              <SystemUpdateAltIcon fontSize="small" />
-              <Box sx={{ position: 'absolute', top: 1, right: 1, width: 14, height: 14, borderRadius: '50%', bgcolor: '#ff9800', color: '#fff', fontSize: '0.55rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {embeddedAnnotCount > 99 ? '99+' : embeddedAnnotCount}
-              </Box>
-            </IconButton>
-          </span>
-        </Tooltip>
-      )}
+      {/* Import Bluebeam annotations button — HIDDEN, annotations rendered natively by PDF */}
 
       {/* Compare button */}
       {onCompare && (
         <Tooltip title={isCompareMode ? "Comparing..." : "Compare revisions"}>
-          <IconButton size="small" sx={isCompareMode ? activeBtnSx : btnSx} onClick={onCompare}>
+          <IconButton
+            size="small"
+            sx={isCompareMode ? activeBtnSx : btnSx}
+            onClick={onCompare}
+          >
             <CompareArrowsIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -1560,16 +1691,26 @@ const PdfToolbar = memo(function PdfToolbar({
       {/* Markup History panel toggle */}
       {onToggleHistory && (
         <Tooltip title={historyOpen ? "Close History" : "Markup History"}>
-          <IconButton size="small" sx={historyOpen ? activeBtnSx : btnSx} onClick={onToggleHistory}>
+          <IconButton
+            size="small"
+            sx={historyOpen ? activeBtnSx : btnSx}
+            onClick={onToggleHistory}
+          >
             <ManageHistoryIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       )}
 
       {/* QA/QC Review panel button — only in QA/QC mode */}
-      {collabMode === 'qaqc' && onToggleQaqcPanel && (
-        <Tooltip title={qaqcPanelOpen ? "Close QA/QC Review" : "Open QA/QC Review"}>
-          <IconButton size="small" sx={qaqcPanelOpen ? activeBtnSx : btnSx} onClick={onToggleQaqcPanel}>
+      {collabMode === "qaqc" && onToggleQaqcPanel && (
+        <Tooltip
+          title={qaqcPanelOpen ? "Close QA/QC Review" : "Open QA/QC Review"}
+        >
+          <IconButton
+            size="small"
+            sx={qaqcPanelOpen ? activeBtnSx : btnSx}
+            onClick={onToggleQaqcPanel}
+          >
             <SpellcheckIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -1577,167 +1718,301 @@ const PdfToolbar = memo(function PdfToolbar({
 
       {/* Properties panel toggle — rendered in Row 2 for two-row layout, here for one-row */}
       {!isMD && onToggleProperties && (
-        <Tooltip title={propertiesHidden ? "Show properties panel" : "Hide properties panel"}>
-          <IconButton size="small" sx={propertiesHidden ? btnSx : activeBtnSx} onClick={onToggleProperties}>
+        <Tooltip
+          title={
+            propertiesHidden ? "Show properties panel" : "Hide properties panel"
+          }
+        >
+          <IconButton
+            size="small"
+            sx={propertiesHidden ? btnSx : activeBtnSx}
+            onClick={onToggleProperties}
+          >
             <EditNoteIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       )}
 
       {/* ─── Collaboration Mode Pill — hidden for read-only users (no markup permission) ─── */}
-      {onCollabModeChange && canMarkup && (() => {
-        const modeColors: Record<string, string> = { personal: '#2196f3', live: '#4caf50', edit: '#ff9800', draft: '#ff9800', qaqc: '#e91e63' };
-        const modeLabels: Record<string, string> = { personal: 'PERSONAL', live: 'LIVE', edit: 'EDIT', draft: 'DRAFT', qaqc: 'QA/QC' };
-        const mc = modeColors[collabMode] || '#4caf50';
-        const ml = modeLabels[collabMode] || 'LIVE';
-        // Personal: show when localStorage has saved markups (actual changes made)
-        // Draft: show when change count > 0
-        const hasPersonalChanges = collabMode === 'personal' && (personalMarkupCount || 0) > 0;
-        const hasEditChanges = collabMode === 'edit' && (draftCount || 0) > 0;
-        const hasChanges = hasPersonalChanges || hasEditChanges || (collabMode === 'draft' && (draftCount || 0) > 0);
-        return (
-          <>
-            <Box
-              onClick={(e) => setCollabAnchorEl(e.currentTarget)}
-              sx={{
-                display: 'flex', alignItems: 'center', gap: 0.5,
-                px: 1, py: 0.25, borderRadius: '12px', ml: 0.5, cursor: 'pointer',
-                bgcolor: alpha(mc, 0.12),
-                border: `1.5px solid ${alpha(mc, 0.5)}`,
-                '&:hover': { bgcolor: alpha(mc, 0.2) },
-                transition: 'background-color 0.15s',
-              }}
-            >
-              {/* Pulsing dot for Session mode */}
-              <Box sx={{
-                width: 7, height: 7, borderRadius: '50%', bgcolor: mc, flexShrink: 0,
-                ...(collabMode === 'live' ? {
-                  animation: 'collabPulse 2s ease-in-out infinite',
-                  '@keyframes collabPulse': {
-                    '0%,100%': { boxShadow: `0 0 0 0 ${alpha(mc, 0.5)}` },
-                    '50%': { boxShadow: `0 0 0 4px ${alpha(mc, 0)}` },
+      {onCollabModeChange &&
+        canMarkup &&
+        (() => {
+          const modeColors: Record<string, string> = {
+            personal: "#2196f3",
+            live: "#4caf50",
+            edit: "#ff9800",
+            draft: "#ff9800",
+            qaqc: "#e91e63",
+          };
+          const modeLabels: Record<string, string> = {
+            personal: "PERSONAL",
+            live: "LIVE",
+            edit: "EDIT",
+            draft: "DRAFT",
+            qaqc: "QA/QC",
+          };
+          const mc = modeColors[collabMode] || "#4caf50";
+          const ml = modeLabels[collabMode] || "LIVE";
+          // Personal: show when localStorage has saved markups (actual changes made)
+          // Draft: show when change count > 0
+          const hasPersonalChanges =
+            collabMode === "personal" && (personalMarkupCount || 0) > 0;
+          const hasEditChanges = collabMode === "edit" && (draftCount || 0) > 0;
+          const hasChanges =
+            hasPersonalChanges ||
+            hasEditChanges ||
+            (collabMode === "draft" && (draftCount || 0) > 0);
+          return (
+            <>
+              <Box
+                onClick={(e) => setCollabAnchorEl(e.currentTarget)}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: "12px",
+                  ml: 0.5,
+                  cursor: "pointer",
+                  bgcolor: alpha(mc, 0.12),
+                  border: `1.5px solid ${alpha(mc, 0.5)}`,
+                  "&:hover": { bgcolor: alpha(mc, 0.2) },
+                  transition: "background-color 0.15s",
+                }}
+              >
+                {/* Pulsing dot for Session mode */}
+                <Box
+                  sx={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    bgcolor: mc,
+                    flexShrink: 0,
+                    ...(collabMode === "live"
+                      ? {
+                          animation: "collabPulse 2s ease-in-out infinite",
+                          "@keyframes collabPulse": {
+                            "0%,100%": {
+                              boxShadow: `0 0 0 0 ${alpha(mc, 0.5)}`,
+                            },
+                            "50%": { boxShadow: `0 0 0 4px ${alpha(mc, 0)}` },
+                          },
+                        }
+                      : {}),
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: "0.72rem",
+                    fontWeight: 700,
+                    color: mc,
+                    whiteSpace: "nowrap",
+                    userSelect: "none",
+                  }}
+                >
+                  {ml}
+                </Typography>
+
+                {/* Avatar stack for session mode */}
+                {(collabMode === "live" || collabMode === "edit") &&
+                  connectedUsers.length > 0 && (
+                    <Tooltip
+                      title={connectedUsers.map((u) => u.name).join(", ")}
+                    >
+                      <Box sx={{ display: "flex", ml: 0.25 }}>
+                        {connectedUsers.slice(0, 3).map((u, i) => (
+                          <Box
+                            key={u.id}
+                            sx={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: "50%",
+                              bgcolor: u.color,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "0.6rem",
+                              fontWeight: 700,
+                              color: "#fff",
+                              border: `1.5px solid ${isDark ? "#1e1e1e" : "#fff"}`,
+                              ml: i > 0 ? "-6px" : 0,
+                              zIndex: 3 - i,
+                            }}
+                          >
+                            {(u.name || "?")[0].toUpperCase()}
+                          </Box>
+                        ))}
+                        {connectedUsers.length > 3 && (
+                          <Box
+                            sx={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: "50%",
+                              bgcolor: isDark ? "#555" : "#bbb",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "0.55rem",
+                              fontWeight: 700,
+                              color: "#fff",
+                              border: `1.5px solid ${isDark ? "#1e1e1e" : "#fff"}`,
+                              ml: "-6px",
+                              zIndex: 0,
+                            }}
+                          >
+                            +{connectedUsers.length - 3}
+                          </Box>
+                        )}
+                      </Box>
+                    </Tooltip>
+                  )}
+
+                {/* Apply/Discard buttons — only when there are actual changes */}
+                {hasChanges && (
+                  <>
+                    <Tooltip
+                      title={
+                        collabMode === "personal"
+                          ? "Publish changes"
+                          : "Apply changes"
+                      }
+                    >
+                      <IconButton
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (collabMode === "personal") onPublishPersonal?.();
+                          else onApplyDrafts?.();
+                        }}
+                        sx={{ p: 0.3, color: "#4caf50" }}
+                      >
+                        <CheckIcon sx={{ fontSize: 15 }} />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Discard changes">
+                      <IconButton
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (collabMode === "personal") onDiscardPersonal?.();
+                          else onDiscardDrafts?.();
+                        }}
+                        sx={{ p: 0.3, color: "#f44336" }}
+                      >
+                        <CloseIcon sx={{ fontSize: 15 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </>
+                )}
+              </Box>
+
+              {/* Mode selector dropdown */}
+              <Popover
+                open={Boolean(collabAnchorEl)}
+                anchorEl={collabAnchorEl}
+                onClose={() => setCollabAnchorEl(null)}
+                anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+                transformOrigin={{ vertical: "top", horizontal: "left" }}
+                slotProps={{
+                  paper: {
+                    sx: {
+                      mt: 0.5,
+                      borderRadius: "10px",
+                      minWidth: 220,
+                      bgcolor: isDark ? "#2a2a2a" : "#fff",
+                      border: `1px solid ${theme.palette.divider}`,
+                    },
                   },
-                } : {}),
-              }} />
-              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: mc, whiteSpace: 'nowrap', userSelect: 'none' }}>
-                {ml}
-              </Typography>
-
-              {/* Avatar stack for session mode */}
-              {(collabMode === 'live' || collabMode === 'edit') && connectedUsers.length > 0 && (
-                <Tooltip title={connectedUsers.map(u => u.name).join(', ')}>
-                  <Box sx={{ display: 'flex', ml: 0.25 }}>
-                    {connectedUsers.slice(0, 3).map((u, i) => (
-                      <Box key={u.id} sx={{
-                        width: 20, height: 20, borderRadius: '50%', bgcolor: u.color,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.6rem', fontWeight: 700, color: '#fff',
-                        border: `1.5px solid ${isDark ? '#1e1e1e' : '#fff'}`,
-                        ml: i > 0 ? '-6px' : 0, zIndex: 3 - i,
-                      }}>
-                        {(u.name || '?')[0].toUpperCase()}
+                }}
+              >
+                {(["personal", "edit", "live"] as const).map((mode) => {
+                  const colors: Record<string, string> = {
+                    personal: "#2196f3",
+                    live: "#4caf50",
+                    edit: "#ff9800",
+                  };
+                  const labels: Record<string, string> = {
+                    personal: "Personal",
+                    live: "Live",
+                    edit: "Edit",
+                  };
+                  const descs: Record<string, string> = {
+                    personal: "View only — browse markups without editing",
+                    live: "Collaborate — create markups visible to all",
+                    edit: "Exclusive edit — full control, locks for others",
+                  };
+                  const isLocked = mode === "edit" && !!editLockUser;
+                  const c = colors[mode];
+                  const isActive = collabMode === mode;
+                  return (
+                    <Box
+                      key={mode}
+                      onClick={() => {
+                        if (isLocked) return; // can't select if locked by another user
+                        onCollabModeChange(mode);
+                        setCollabAnchorEl(null);
+                      }}
+                      sx={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 1,
+                        px: 1.5,
+                        py: 1,
+                        cursor: isLocked ? "not-allowed" : "pointer",
+                        opacity: isLocked ? 0.5 : 1,
+                        bgcolor: isActive ? alpha(c, 0.1) : "transparent",
+                        "&:hover": {
+                          bgcolor: isLocked ? "transparent" : alpha(c, 0.08),
+                        },
+                        borderLeft: isActive
+                          ? `3px solid ${c}`
+                          : "3px solid transparent",
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          bgcolor: c,
+                          mt: 0.7,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box>
+                        <Typography
+                          sx={{
+                            fontSize: "0.82rem",
+                            fontWeight: isActive ? 700 : 500,
+                            color: isActive ? c : "text.primary",
+                          }}
+                        >
+                          {labels[mode]}
+                          {isLocked && ` (locked by ${editLockUser!.name})`}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            fontSize: "0.7rem",
+                            color: "text.secondary",
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          {descs[mode]}
+                        </Typography>
                       </Box>
-                    ))}
-                    {connectedUsers.length > 3 && (
-                      <Box sx={{
-                        width: 20, height: 20, borderRadius: '50%',
-                        bgcolor: isDark ? '#555' : '#bbb',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.55rem', fontWeight: 700, color: '#fff',
-                        border: `1.5px solid ${isDark ? '#1e1e1e' : '#fff'}`,
-                        ml: '-6px', zIndex: 0,
-                      }}>
-                        +{connectedUsers.length - 3}
-                      </Box>
-                    )}
-                  </Box>
-                </Tooltip>
-              )}
-
-              {/* Apply/Discard buttons — only when there are actual changes */}
-              {hasChanges && (
-                <>
-                  <Tooltip title={collabMode === 'personal' ? 'Publish changes' : 'Apply changes'}>
-                    <IconButton size="small" onClick={(e) => {
-                      e.stopPropagation();
-                      if (collabMode === 'personal') onPublishPersonal?.();
-                      else onApplyDrafts?.();
-                    }} sx={{ p: 0.3, color: '#4caf50' }}>
-                      <CheckIcon sx={{ fontSize: 15 }} />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Discard changes">
-                    <IconButton size="small" onClick={(e) => {
-                      e.stopPropagation();
-                      if (collabMode === 'personal') onDiscardPersonal?.();
-                      else onDiscardDrafts?.();
-                    }} sx={{ p: 0.3, color: '#f44336' }}>
-                      <CloseIcon sx={{ fontSize: 15 }} />
-                    </IconButton>
-                  </Tooltip>
-                </>
-              )}
-            </Box>
-
-            {/* Mode selector dropdown */}
-            <Popover
-              open={Boolean(collabAnchorEl)}
-              anchorEl={collabAnchorEl}
-              onClose={() => setCollabAnchorEl(null)}
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-              transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-              slotProps={{ paper: { sx: {
-                mt: 0.5, borderRadius: '10px', minWidth: 220,
-                bgcolor: isDark ? '#2a2a2a' : '#fff',
-                border: `1px solid ${theme.palette.divider}`,
-              }}}}
-            >
-              {(['personal', 'edit', 'live'] as const).map((mode) => {
-                const colors: Record<string, string> = { personal: '#2196f3', live: '#4caf50', edit: '#ff9800' };
-                const labels: Record<string, string> = { personal: 'Personal', live: 'Live', edit: 'Edit' };
-                const descs: Record<string, string> = {
-                  personal: 'View only — browse markups without editing',
-                  live: 'Collaborate — create markups visible to all',
-                  edit: 'Exclusive edit — full control, locks for others',
-                };
-                const isLocked = mode === 'edit' && !!editLockUser;
-                const c = colors[mode];
-                const isActive = collabMode === mode;
-                return (
-                  <Box
-                    key={mode}
-                    onClick={() => {
-                      if (isLocked) return; // can't select if locked by another user
-                      onCollabModeChange(mode);
-                      setCollabAnchorEl(null);
-                    }}
-                    sx={{
-                      display: 'flex', alignItems: 'flex-start', gap: 1, px: 1.5, py: 1,
-                      cursor: isLocked ? 'not-allowed' : 'pointer',
-                      opacity: isLocked ? 0.5 : 1,
-                      bgcolor: isActive ? alpha(c, 0.1) : 'transparent',
-                      '&:hover': { bgcolor: isLocked ? 'transparent' : alpha(c, 0.08) },
-                      borderLeft: isActive ? `3px solid ${c}` : '3px solid transparent',
-                    }}
-                  >
-                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: c, mt: 0.7, flexShrink: 0 }} />
-                    <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: isActive ? 700 : 500, color: isActive ? c : 'text.primary' }}>
-                        {labels[mode]}
-                        {isLocked && ` (locked by ${editLockUser!.name})`}
-                      </Typography>
-                      <Typography sx={{ fontSize: '0.7rem', color: 'text.secondary', lineHeight: 1.3 }}>
-                        {descs[mode]}
-                      </Typography>
+                      {isActive && (
+                        <CheckIcon
+                          sx={{ fontSize: 16, color: c, ml: "auto", mt: 0.3 }}
+                        />
+                      )}
                     </Box>
-                    {isActive && <CheckIcon sx={{ fontSize: 16, color: c, ml: 'auto', mt: 0.3 }} />}
-                  </Box>
-                );
-              })}
-            </Popover>
-          </>
-        );
-      })()}
+                  );
+                })}
+              </Popover>
+            </>
+          );
+        })()}
 
       {/* Legacy Draft Mode fallback (if collabMode not wired up) */}
       {!onCollabModeChange && onDraftModeToggle && !draftMode && (
@@ -1748,26 +2023,48 @@ const PdfToolbar = memo(function PdfToolbar({
         </Tooltip>
       )}
       {!onCollabModeChange && draftMode && (
-        <Box sx={{
-          display: 'flex', alignItems: 'center', gap: 0.5,
-          px: 1, py: 0.25, borderRadius: '12px', ml: 0.5,
-          bgcolor: alpha('#ff9800', 0.12),
-          border: `1.5px solid ${alpha('#ff9800', 0.5)}`,
-        }}>
-          <EditNoteIcon sx={{ fontSize: 16, color: '#ff9800' }} />
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#ff9800', whiteSpace: 'nowrap' }}>
-            DRAFT{draftCount > 0 ? ` (${draftCount})` : ''}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            px: 1,
+            py: 0.25,
+            borderRadius: "12px",
+            ml: 0.5,
+            bgcolor: alpha("#ff9800", 0.12),
+            border: `1.5px solid ${alpha("#ff9800", 0.5)}`,
+          }}
+        >
+          <EditNoteIcon sx={{ fontSize: 16, color: "#ff9800" }} />
+          <Typography
+            sx={{
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              color: "#ff9800",
+              whiteSpace: "nowrap",
+            }}
+          >
+            DRAFT{draftCount > 0 ? ` (${draftCount})` : ""}
           </Typography>
           {onApplyDrafts && draftCount > 0 && (
             <Tooltip title="Apply drafts — save to document">
-              <IconButton size="small" onClick={onApplyDrafts} sx={{ p: 0.3, color: '#4caf50' }}>
+              <IconButton
+                size="small"
+                onClick={onApplyDrafts}
+                sx={{ p: 0.3, color: "#4caf50" }}
+              >
                 <CheckIcon sx={{ fontSize: 15 }} />
               </IconButton>
             </Tooltip>
           )}
           {onDiscardDrafts && (
             <Tooltip title="Discard drafts">
-              <IconButton size="small" onClick={onDiscardDrafts} sx={{ p: 0.3, color: '#f44336' }}>
+              <IconButton
+                size="small"
+                onClick={onDiscardDrafts}
+                sx={{ p: 0.3, color: "#f44336" }}
+              >
                 <CloseIcon sx={{ fontSize: 15 }} />
               </IconButton>
             </Tooltip>
@@ -1874,7 +2171,7 @@ const PdfToolbar = memo(function PdfToolbar({
         sx={{
           bgcolor: "background.paper",
           borderBottom: draftMode
-            ? `2px solid ${alpha('#ff9800', 0.5)}`
+            ? `2px solid ${alpha("#ff9800", 0.5)}`
             : `1px solid ${isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)"}`,
           boxShadow: isDark ? "none" : "0 1px 3px rgba(0,0,0,0.06)",
         }}
@@ -1882,25 +2179,45 @@ const PdfToolbar = memo(function PdfToolbar({
         {isMD ? (
           /* ── TWO ROWS (≤1920px): Row 1 nav+select+actions, Row 2 drawing tools ── */
           <>
-            <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 42, px: '6px', gap: 0.5 }}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                minHeight: 42,
+                px: "6px",
+                gap: 0.5,
+              }}
+            >
               {navigationContent}
               {/* Select/Pan/TextSelect in Row 1 */}
               <Box sx={pillSx}>
                 <Tooltip title="Select (V)">
-                  <IconButton size="small" sx={tool === "select" ? activeBtnSx : btnSx} onClick={() => onToolChange("select")}>
+                  <IconButton
+                    size="small"
+                    sx={tool === "select" ? activeBtnSx : btnSx}
+                    onClick={() => onToolChange("select")}
+                  >
                     <AdsClickIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
-                {isToolVisible('pan') && (
+                {isToolVisible("pan") && (
                   <Tooltip title="Pan (Space)">
-                    <IconButton size="small" sx={tool === "pan" ? activeBtnSx : btnSx} onClick={() => onToolChange("pan")}>
+                    <IconButton
+                      size="small"
+                      sx={tool === "pan" ? activeBtnSx : btnSx}
+                      onClick={() => onToolChange("pan")}
+                    >
                       <PanToolIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
                 )}
-                {isToolVisible('textSelect') && (
+                {isToolVisible("textSelect") && (
                   <Tooltip title="Text Select">
-                    <IconButton size="small" sx={tool === "textSelect" ? activeBtnSx : btnSx} onClick={() => onToolChange("textSelect")}>
+                    <IconButton
+                      size="small"
+                      sx={tool === "textSelect" ? activeBtnSx : btnSx}
+                      onClick={() => onToolChange("textSelect")}
+                    >
                       <AbcIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -1910,22 +2227,38 @@ const PdfToolbar = memo(function PdfToolbar({
               {actionsContent}
             </Box>
             {canMarkup && (
-              <Box sx={{
-                display: 'flex', alignItems: 'center', gap: 0.5,
-                px: '6px', py: '2px', minHeight: 36,
-                borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'}`,
-                overflowX: 'auto', overflowY: 'hidden',
-                scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' },
-                '& > *': { flexShrink: 0 },
-              }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  px: "6px",
+                  py: "2px",
+                  minHeight: 36,
+                  borderTop: `1px solid ${isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"}`,
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                  scrollbarWidth: "none",
+                  "&::-webkit-scrollbar": { display: "none" },
+                  "& > *": { flexShrink: 0 },
+                }}
+              >
                 {drawingToolsPill}
                 {colorWidthStyleContent}
                 {routeStampsElectricalPill}
                 {/* Properties toggle — rightmost in Row 2 */}
                 {onToggleProperties && (
-                  <Box sx={{ ml: 'auto' }}>
-                    <Tooltip title={propertiesHidden ? "Show properties" : "Hide properties"}>
-                      <IconButton size="small" sx={propertiesHidden ? btnSx : activeBtnSx} onClick={onToggleProperties}>
+                  <Box sx={{ ml: "auto" }}>
+                    <Tooltip
+                      title={
+                        propertiesHidden ? "Show properties" : "Hide properties"
+                      }
+                    >
+                      <IconButton
+                        size="small"
+                        sx={propertiesHidden ? btnSx : activeBtnSx}
+                        onClick={onToggleProperties}
+                      >
                         <EditNoteIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
@@ -3767,60 +4100,128 @@ const PdfToolbar = memo(function PdfToolbar({
         transformOrigin={{ vertical: "top", horizontal: "center" }}
         PaperProps={{
           sx: {
-            p: 0, borderRadius: "12px", border: 1, borderColor: "divider",
-            bgcolor: "background.paper", boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
-            width: 240, maxHeight: "75vh", overflowY: "auto",
+            p: 0,
+            borderRadius: "12px",
+            border: 1,
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+            width: 240,
+            maxHeight: "75vh",
+            overflowY: "auto",
             "&::-webkit-scrollbar": { width: 4 },
-            "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(128,128,128,0.2)", borderRadius: 4 },
+            "&::-webkit-scrollbar-thumb": {
+              bgcolor: "rgba(128,128,128,0.2)",
+              borderRadius: 4,
+            },
           },
         }}
       >
-        <Box sx={{ px: 1.5, py: 0.6, bgcolor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}` }}>
-          <Typography sx={{ fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.6, color: alpha(gold, 0.7) }}>
+        <Box
+          sx={{
+            px: 1.5,
+            py: 0.6,
+            bgcolor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
+            borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: "0.6rem",
+              fontWeight: 800,
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+              color: alpha(gold, 0.7),
+            }}
+          >
             Tool Chest
           </Typography>
         </Box>
         <Box sx={{ px: 0.5, py: 0.5 }}>
           {presets.map((preset) => {
             const displayFields = getPresetDisplayFields(preset);
-            const strokeField = displayFields.find((f: any) => f.key === "stroke");
+            const strokeField = displayFields.find(
+              (f: any) => f.key === "stroke",
+            );
             const mType = getPresetMarkupType(preset);
-            const isCustomStamp = mType === 'customStamp';
-            const typeIcon = mType && !isCustomStamp ? TOOL_CHEST_TYPE_ICONS[mType] : null;
+            const isCustomStamp = mType === "customStamp";
+            const typeIcon =
+              mType && !isCustomStamp ? TOOL_CHEST_TYPE_ICONS[mType] : null;
             // Custom stamps: generate unique initials + color from name
-            const rawIconColor = isCustomStamp ? getNameColor(preset.name) : (strokeField?.defaultValue || gold);
+            const rawIconColor = isCustomStamp
+              ? getNameColor(preset.name)
+              : strokeField?.defaultValue || gold;
             // Guard against 'transparent' or invalid CSS colors that break alpha()
-            const iconColor = (!rawIconColor || rawIconColor === 'transparent' || rawIconColor === 'none') ? gold : rawIconColor;
-            const initials = isCustomStamp ? getNameInitials(preset.name) : null;
+            const iconColor =
+              !rawIconColor ||
+              rawIconColor === "transparent" ||
+              rawIconColor === "none"
+                ? gold
+                : rawIconColor;
+            const initials = isCustomStamp
+              ? getNameInitials(preset.name)
+              : null;
             return (
-              <Box key={preset.id}
-                onClick={() => { if (onApplyPreset) onApplyPreset(preset); setToolChestAnchor(null); }}
+              <Box
+                key={preset.id}
+                onClick={() => {
+                  if (onApplyPreset) onApplyPreset(preset);
+                  setToolChestAnchor(null);
+                }}
                 sx={{
-                  display: "flex", alignItems: "center", gap: 0.75,
-                  px: 1, py: 0.5, borderRadius: "6px", cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: "6px",
+                  cursor: "pointer",
                   "&:hover": { bgcolor: alpha(iconColor, 0.1) },
                   transition: "background 0.1s",
                 }}
               >
-                <Box sx={{
-                  width: 24, height: 24, flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  borderRadius: isCustomStamp ? "6px" : "6px",
-                  border: `2px solid ${iconColor}`,
-                  bgcolor: isCustomStamp ? iconColor : "transparent",
-                  color: isCustomStamp ? "#fff" : iconColor,
-                  fontSize: isCustomStamp ? "0.65rem" : undefined,
-                  fontWeight: 900, lineHeight: 1,
-                  '& svg': { fontSize: 14 },
-                }}>
-                  {isCustomStamp ? initials : (typeIcon || <ConstructionIcon sx={{ fontSize: 14 }} />)}
+                <Box
+                  sx={{
+                    width: 24,
+                    height: 24,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: isCustomStamp ? "6px" : "6px",
+                    border: `2px solid ${iconColor}`,
+                    bgcolor: isCustomStamp ? iconColor : "transparent",
+                    color: isCustomStamp ? "#fff" : iconColor,
+                    fontSize: isCustomStamp ? "0.65rem" : undefined,
+                    fontWeight: 900,
+                    lineHeight: 1,
+                    "& svg": { fontSize: 14 },
+                  }}
+                >
+                  {isCustomStamp
+                    ? initials
+                    : typeIcon || <ConstructionIcon sx={{ fontSize: 14 }} />}
                 </Box>
-                <Typography noWrap sx={{ fontSize: "0.8rem", flex: 1, fontWeight: 500 }}>
+                <Typography
+                  noWrap
+                  sx={{ fontSize: "0.8rem", flex: 1, fontWeight: 500 }}
+                >
                   {preset.name}
                 </Typography>
                 {onDeletePreset && (
-                  <IconButton size="small" onClick={(e) => { e.stopPropagation(); onDeletePreset(preset.id); }}
-                    sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' }, flexShrink: 0 }}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeletePreset(preset.id);
+                    }}
+                    sx={{
+                      p: 0.25,
+                      color: "text.disabled",
+                      "&:hover": { color: "error.main" },
+                      flexShrink: 0,
+                    }}
+                  >
                     <CloseIcon sx={{ fontSize: 13 }} />
                   </IconButton>
                 )}

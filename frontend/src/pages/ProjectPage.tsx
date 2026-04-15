@@ -186,17 +186,6 @@ function FolderMobileCard({
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
-        <MenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            handleMenuClose();
-            navigate(`/projects/${folder.projectId}/folders/${folder.id}`);
-          }}
-        >
-          <VisibilityIcon fontSize="small" sx={{ mr: 1 }} />
-          {t("open")}
-        </MenuItem>
         {canEdit && (
           <MenuItem
             onClick={(e) => {
@@ -341,17 +330,6 @@ function DocumentMobileCard({
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
-        <MenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            handleMenuClose();
-            navigate(`/projects/${projectId}/documents/${doc.id}`);
-          }}
-        >
-          <VisibilityIcon fontSize="small" sx={{ mr: 1 }} />
-          {t("open")}
-        </MenuItem>
         {canDownload && (
           <MenuItem
             onClick={(e) => {
@@ -639,12 +617,13 @@ export default function ProjectPage() {
   const canDelete = perms?.canDelete ?? false;
   const canDownload = perms?.canDownload ?? false;
   const canManage = perms?.canManage ?? false;
+  const canUpload = perms?.canUpload ?? canEdit; // fallback to canEdit for backward compat
 
   // OS file drag-to-upload handlers
   const handleFilesDrop = useCallback(
     (targetFolderId: string | undefined, files: FileList | File[]) => {
       if (!targetFolderId) return;
-      if (!canEdit) {
+      if (!canUpload) {
         alert(t("noPermissionToUpload"));
         return;
       }
@@ -652,11 +631,11 @@ export default function ProjectPage() {
       const fileArray = Array.from(files);
       performUpload({ folderId: targetFolderId, files: fileArray });
       },
-      [canEdit, t, performUpload],
+      [canUpload, t, performUpload],
       );
   const handlePageDragOver = useCallback(
     (e: React.DragEvent) => {
-      if (!canEdit) return;
+      if (!canUpload) return;
       if (e.dataTransfer.types.includes("Files")) {
         e.preventDefault();
         e.stopPropagation();
@@ -1201,6 +1180,7 @@ export default function ProjectPage() {
             >
               {t("createFolder")}
             </Button>
+            {canUpload && (
             <Button
               variant="contained"
               startIcon={<UploadFileIcon />}
@@ -1210,6 +1190,7 @@ export default function ProjectPage() {
             >
               {t("uploadDocument")}
             </Button>
+            )}
           </Box>
         )}
       </Box>
@@ -1742,7 +1723,7 @@ export default function ProjectPage() {
             >
               <Typography variant="body1" color="text.secondary">
                 {searchQuery
-                  ? t("noSearchResults")
+                  ? t("searchNoResults")
                   : contents && "noAccess" in contents && contents.noAccess
                     ? t("noAccess")
                     : t("emptyFolder")}

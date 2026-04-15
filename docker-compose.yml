@@ -1,8 +1,8 @@
-version: '3.8'
+version: "3.8"
 
 services:
   app:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
     container_name: redlines_app
@@ -16,6 +16,10 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - TILE_SERVER_URL=http://tile-server:8080
+      - SITE_URL=${SITE_URL:-http://localhost:3030}
+    volumes:
+      - uploads_data:/app/backend/uploads
+      - ./backend/public:/app/backend/public
     depends_on:
       - db
       - tile-server
@@ -55,7 +59,7 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:
   # Persistent tile cache — survives container restarts.
   # First user generates tiles; all subsequent users get them from disk cache instantly.
   tile_cache:
-

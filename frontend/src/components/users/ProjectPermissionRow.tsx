@@ -8,6 +8,7 @@ interface Permission {
   canEdit: boolean;
   canDelete: boolean;
   canDownload: boolean;
+  canUpload: boolean;
   canMarkup: boolean;
   canManage: boolean;
 }
@@ -29,6 +30,7 @@ const PERMISSION_KEYS: (keyof Permission)[] = [
   'canEdit',
   'canDelete',
   'canDownload',
+  'canUpload',
   'canMarkup',
   'canManage',
 ];
@@ -118,7 +120,7 @@ export default function ProjectPermissionRow({
               disabled={disabled}
             />
             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
-              {t(key)}
+              {({ canView: 'View', canEdit: 'Edit', canDelete: 'Delete', canDownload: 'Download', canUpload: 'Upload', canMarkup: 'Markup', canManage: 'Manage' } as Record<string, string>)[key] || key}
             </Typography>
           </Box>
         ))}

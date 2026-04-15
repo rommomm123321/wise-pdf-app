@@ -58,7 +58,7 @@ class UserController {
                 role: { select: { id: true, name: true, color: true } },
                 scope: true,
                 project: { select: { id: true, name: true } },
-                canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true,
+                canView: true, canEdit: true, canDelete: true, canDownload: true, canUpload: true, canMarkup: true, canManage: true,
               },
             },
             folderPermissions: {
@@ -66,7 +66,7 @@ class UserController {
                 id: true, folderId: true, roleId: true,
                 role: { select: { id: true, name: true, color: true } },
                 folder: { select: { id: true, name: true, projectId: true } },
-                canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true,
+                canView: true, canEdit: true, canDelete: true, canDownload: true, canUpload: true, canMarkup: true, canManage: true,
               }
             }
           },
@@ -127,7 +127,7 @@ class UserController {
             role: { select: { name: true, color: true } },
             scope: true,
             project: { select: { id: true, name: true } },
-            canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true,
+            canView: true, canEdit: true, canDelete: true, canDownload: true, canUpload: true, canMarkup: true, canManage: true,
           }
         }
       };
@@ -138,7 +138,7 @@ class UserController {
             id: true, folderId: true, roleId: true,
             role: { select: { id: true, name: true, color: true } },
             folder: { select: { id: true, name: true, projectId: true } },
-            canView: true, canEdit: true, canDelete: true, canDownload: true, canMarkup: true, canManage: true,
+            canView: true, canEdit: true, canDelete: true, canDownload: true, canUpload: true, canMarkup: true, canManage: true,
           }
         };
       }
@@ -294,11 +294,11 @@ class UserController {
   static async assignToProject(req, res) {
     try {
       const { userId, projectId } = req.params;
-      const { roleId, canView = true, canEdit = false, canDelete = false, canDownload = true, canMarkup = false, canManage = false, scope = 'FULL' } = req.body;
+      const { roleId, canView = true, canEdit = false, canDelete = false, canDownload = true, canUpload = true, canMarkup = false, canManage = false, scope = 'FULL' } = req.body;
       const assignment = await prisma.projectAssignment.upsert({
         where: { userId_projectId: { userId, projectId } },
-        create: { userId, projectId, roleId, canView, canEdit, canDelete, canDownload, canMarkup, canManage, scope },
-        update: { roleId, canView, canEdit, canDelete, canDownload, canMarkup, canManage, scope },
+        create: { userId, projectId, roleId, canView, canEdit, canDelete, canDownload, canUpload, canMarkup, canManage, scope },
+        update: { roleId, canView, canEdit, canDelete, canDownload, canUpload, canMarkup, canManage, scope },
       });
       res.json({ status: 'ok', data: assignment });
     } catch (error) { res.status(500).json({ error: error.message }); }

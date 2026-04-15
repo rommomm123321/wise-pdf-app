@@ -162,7 +162,7 @@ export default function UserDetailDialog({ userId, open, onClose }: UserDetailDi
       {
         userId: user.id,
         projectId: addProjectId,
-        permissions: { canView: true, canEdit: false, canDelete: false, canDownload: true, canMarkup: true, canManage: false, scope: 'FULL' },
+        permissions: { canView: true, canEdit: false, canDelete: false, canDownload: true, canUpload: true, canMarkup: true, canManage: false, scope: 'FULL' },
       },
       {
         onSuccess: () => {

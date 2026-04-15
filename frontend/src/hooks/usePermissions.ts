@@ -7,6 +7,7 @@ interface Permissions {
   canEdit: boolean;
   canDelete: boolean;
   canDownload: boolean;
+  canUpload: boolean;
   canMarkup: boolean;
   canManage: boolean;
 }
@@ -16,6 +17,7 @@ const FULL_ACCESS: Permissions = {
   canEdit: true,
   canDelete: true,
   canDownload: true,
+  canUpload: true,
   canMarkup: true,
   canManage: true,
 };
@@ -29,7 +31,7 @@ export function useProjectPermissions(projectId: string | undefined): Permission
   const { user } = useAuth();
 
   if (!user || !projectId) {
-    return { canView: false, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, canManage: false };
+    return { canView: false, canEdit: false, canDelete: false, canDownload: false, canUpload: false, canMarkup: false, canManage: false };
   }
 
   // Admins — full access
@@ -39,7 +41,7 @@ export function useProjectPermissions(projectId: string | undefined): Permission
 
   // For other roles, we need assignments. Use a simple query.
   // This is kept as a hook-friendly fallback.
-  return { canView: true, canEdit: false, canDelete: false, canDownload: true, canMarkup: false, canManage: false };
+  return { canView: true, canEdit: false, canDelete: false, canDownload: true, canUpload: false, canMarkup: false, canManage: false };
 }
 
 /**
@@ -52,7 +54,7 @@ export function useMyProjectPermissions(projectId: string | undefined) {
   return useQuery({
     queryKey: ['my-permissions', projectId],
     queryFn: async (): Promise<Permissions> => {
-      if (!user || !projectId) return { canView: false, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, canManage: false };
+      if (!user || !projectId) return { canView: false, canEdit: false, canDelete: false, canDownload: false, canUpload: false, canMarkup: false, canManage: false };
 
       if (user.systemRole === 'GENERAL_ADMIN' || user.role?.name === 'Admin') {
         return FULL_ACCESS;
@@ -71,13 +73,14 @@ export function useMyProjectPermissions(projectId: string | undefined) {
             canEdit: assignment.canEdit,
             canDelete: assignment.canDelete,
             canDownload: assignment.canDownload,
+            canUpload: assignment.canUpload ?? assignment.canEdit,
             canMarkup: assignment.canMarkup,
             canManage: assignment.canManage,
           };
         }
       }
 
-      return { canView: true, canEdit: false, canDelete: false, canDownload: false, canMarkup: false, canManage: false };
+      return { canView: true, canEdit: false, canDelete: false, canDownload: false, canUpload: false, canMarkup: false, canManage: false };
     },
     enabled: !!projectId && !!user,
     staleTime: 30000, // Cache for 30s

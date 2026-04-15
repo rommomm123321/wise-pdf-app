@@ -163,6 +163,9 @@ model User {
   reviewsAsInspector  ReviewSession[] @relation("ReviewInspector")
   reviewsAsAssignee   ReviewSession[] @relation("ReviewAssignee")
   markupHistory       MarkupHistory[]
+  reviewAssignmentsRequested ReviewAssignment[] @relation("ReviewRequester")
+  reviewAssignmentsReceived  ReviewAssignment[] @relation("ReviewAssignee2")
+  uploadPresets       UploadPreset[]
 }
 
 model ProjectAssignment {
@@ -329,6 +332,7 @@ model Document {
   markups     Markup[]
   reviews     ReviewSession[]
   history     MarkupHistory[]
+  reviewAssignments ReviewAssignment[]
 }
 model Markup {
   id          String   @id @default(uuid())
@@ -375,15 +379,59 @@ model Notification {
   user       User     @relation("NotificationsReceived", fields: [userId], references: [id], onDelete: Cascade)
   actorId    String
   actor      User     @relation("NotificationsSent", fields: [actorId], references: [id], onDelete: Cascade)
-  markupId   String
-  documentId String
-  projectId  String
+  markupId   String?
+  documentId String?
+  projectId  String?
+  // Type: "mention" (default), "review_request", "review_approved", "review_rejected"
+  type       String   @default("mention")
+  // For review_request: links to ReviewAssignment
+  assignmentId String?
+  message    String?
   read       Boolean  @default(false)
   createdAt  DateTime @default(now())
 
-  @@unique([userId, markupId])
   @@index([userId])
   @@index([createdAt])
+}
+
+// Review Assignment: someone uploads a PDF and assigns it to a reviewer
+model ReviewAssignment {
+  id            String   @id @default(uuid())
+  documentId    String
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  // Who uploaded / requested review
+  requesterId   String
+  requester     User     @relation("ReviewRequester", fields: [requesterId], references: [id])
+  // Who should review
+  reviewerId    String
+  reviewer      User     @relation("ReviewAssignee2", fields: [reviewerId], references: [id])
+  // Status: pending → has_markups | approved
+  status        String   @default("pending") // pending, has_markups, approved
+  comment       String?
+  // Source: "web" or "revit"
+  source        String   @default("web")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([documentId])
+  @@index([reviewerId])
+  @@index([requesterId])
+}
+
+// Upload Preset: saved upload config for Revit plugin (one-click upload)
+model UploadPreset {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  projectId   String
+  folderId    String
+  assignToId  String?  // default reviewer
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model ProjectMarkupField {

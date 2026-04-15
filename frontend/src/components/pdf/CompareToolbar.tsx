@@ -1,9 +1,10 @@
 import React from 'react';
-import { Box, Typography, IconButton, Slider, Tooltip, useTheme, alpha, useMediaQuery, CircularProgress } from '@mui/material';
+import { Box, Typography, IconButton, Slider, Tooltip, Switch, useTheme, alpha, useMediaQuery, CircularProgress } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import LayersIcon from '@mui/icons-material/Layers';
 
 interface CompareToolbarProps {
   oldColor: string;
@@ -21,12 +22,15 @@ interface CompareToolbarProps {
   isDetecting?: boolean;
   oldLabel?: string;
   newLabel?: string;
+  showMarkups?: boolean;
+  onToggleMarkups?: () => void;
 }
 
 export default function CompareToolbar({
   oldColor, newColor, opacity, onOpacityChange,
   showOld, showNew, onToggleOld, onToggleNew,
   onClose, onDetectChanges, isDetecting, oldLabel = 'Old', newLabel = 'New',
+  showMarkups = true, onToggleMarkups,
 }: CompareToolbarProps) {
   const theme = useTheme();
   const gold = theme.palette.primary.main;
@@ -65,6 +69,13 @@ export default function CompareToolbar({
           min={10} max={90} step={5} size="small"
           sx={{ color: gold, flex: 1, mx: 0.5, minWidth: 30, '& .MuiSlider-thumb': { width: 10, height: 10 } }} />
         <Typography sx={{ fontSize: '0.58rem', fontWeight: 700, minWidth: 20, textAlign: 'center', color: 'text.secondary' }}>{opacity}%</Typography>
+        {onToggleMarkups && (
+          <Tooltip title={showMarkups ? 'Hide markups' : 'Show markups'}>
+            <IconButton size="small" onClick={onToggleMarkups} sx={{ p: '3px', color: showMarkups ? gold : 'text.disabled' }}>
+              <LayersIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        )}
         {onDetectChanges && (
           <IconButton size="small" onClick={onDetectChanges} disabled={isDetecting} sx={{ p: '3px', color: gold }}>
             {isDetecting ? <CircularProgress size={14} color="inherit" /> : <AutoFixHighIcon sx={{ fontSize: 16 }} />}
@@ -92,8 +103,19 @@ export default function CompareToolbar({
 
       <Slider value={opacity} onChange={(_, v) => onOpacityChange(v as number)}
         min={10} max={90} step={5} size="small"
-        sx={{ color: gold, width: 180, '& .MuiSlider-thumb': { width: 10, height: 10 } }} />
+        sx={{ color: gold, flex: 1, minWidth: 140, '& .MuiSlider-thumb': { width: 10, height: 10 } }} />
       <Typography sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary', whiteSpace: 'nowrap' }}>{opacity}%</Typography>
+
+      {/* Toggle markups visibility */}
+      {onToggleMarkups && (
+        <Tooltip title={showMarkups ? 'Hide markups' : 'Show markups'}>
+          <IconButton size="small" onClick={onToggleMarkups}
+            sx={{ p: '3px', color: showMarkups ? gold : 'text.disabled', '&:hover': { bgcolor: alpha(gold, 0.1) } }}>
+            <LayersIcon sx={{ fontSize: 15 }} />
+          </IconButton>
+        </Tooltip>
+      )}
+
       {onDetectChanges && (
         <Tooltip title="Auto-detect changes (place revision clouds)">
           <span>

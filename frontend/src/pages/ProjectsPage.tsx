@@ -141,7 +141,7 @@ function ProjectMobileCard({ project, t, navigate, onMenuOpen, isAdmin }: any) {
               label={project.company?.name || t("noCompany")}
               size="small"
               variant="outlined"
-              sx={{ height: 22, fontSize: "0.65rem" }}
+              sx={{ height: 22, fontSize: "0.65rem", '& .MuiChip-label': { px: 0.75 } }}
             />
             {project.manager && (
               <Chip
@@ -495,6 +495,7 @@ export default function ProjectsPage() {
                       ml: { xs: 0, sm: 1 },
                       height: 24,
                       alignSelf: "center",
+                      '& .MuiChip-label': { px: 1 },
                     }}
                   />
                 )}

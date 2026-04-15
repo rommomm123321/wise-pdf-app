@@ -76,49 +76,19 @@ interface MarkupOverlayProps {
 export default function MarkupOverlay(props: MarkupOverlayProps) {
   const { viewport, docInfo, layouts, containerWidth, containerHeight, pdfDoc } = props;
 
-  // ── Dynamic renderedZoom: adapts Fabric canvas resolution to viewport zoom ──
-  // Strategy: renderedZoom = snap to discrete steps so canvas isn't resized on every scroll.
-  // Steps: 1.0, 2.0, 3.0, 5.0 — covers zoom 0.1x to 20x with cssScale always ≤ 2.0.
-  // When cssScale > 1.5, we bump renderedZoom up; when < 0.5, we drop down.
-  // Debounced 300ms so rapid zooming doesn't cause canvas resize storm.
+  // FROZEN renderedZoom: Fabric canvas renders at a FIXED resolution (2.0x tile-server size).
+  // CSS transform scale() handles ALL zoom levels. Canvas dimensions NEVER change.
+  // This eliminates ALL zoom-related jitter, repositioning bugs, and recreation flicker.
   const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
   const [renderedZoom, setRenderedZoom] = useState(2.0);
-  const renderedZoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevRenderedZoomRef = useRef(2.0);
-
   useEffect(() => {
     const maxPageH = docInfo?.pages?.reduce((m: number, p: any) => Math.max(m, p.h || 0), 0) || 1684;
     const maxPageW = docInfo?.pages?.reduce((m: number, p: any) => Math.max(m, p.w || 0), 0) || 1190;
     const maxDim = Math.max(maxPageW, maxPageH);
-    // Max canvas pixels: 8192px on longest side / DPR
-    const budgetMax = 8192 / (maxDim * dpr);
-
-    // Discrete steps for renderedZoom (don't resize canvas on every pixel of scroll)
-    const STEPS = [1.0, 1.5, 2.0, 3.0, Math.min(5.0, budgetMax)];
-    const vz = viewport.zoom;
-
-    // Find the best step: smallest step where cssScale (vz / step) ≤ 1.5
-    // This means the CSS magnification is at most 1.5x → sharp text
-    let best = STEPS[0];
-    for (const s of STEPS) {
-      if (vz / s <= 1.5) { best = s; break; }
-      best = s; // if all steps give cssScale > 1.5, use the largest
-    }
-    // Don't go below 1.0 or above budget
-    best = Math.max(1.0, Math.min(budgetMax, best));
-
-    // Only update if step actually changed (avoid unnecessary canvas resize)
-    if (Math.abs(best - prevRenderedZoomRef.current) < 0.01) return;
-
-    // Debounce: wait 300ms after zoom settles before resizing canvas
-    if (renderedZoomTimerRef.current) clearTimeout(renderedZoomTimerRef.current);
-    renderedZoomTimerRef.current = setTimeout(() => {
-      prevRenderedZoomRef.current = best;
-      setRenderedZoom(best);
-    }, 300);
-
-    return () => { if (renderedZoomTimerRef.current) clearTimeout(renderedZoomTimerRef.current); };
-  }, [viewport.zoom, docInfo]);
+    const maxSafeZoom = 8192 / (maxDim * dpr);
+    const frozen = Math.max(2.0, Math.min(3.0, maxSafeZoom));
+    setRenderedZoom(frozen);
+  }, [docInfo]);
 
   // Calculate which pages are visible to avoid mounting 100 Fabric.js canvases
   const visiblePages = useMemo(() => {
@@ -202,6 +172,7 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
         return (
           <Box
             key={page.index}
+            data-page-index={page.index}
             sx={{
               position: 'absolute', top: 0, left: 0,
               transform: `translate(${page.screenX}px, ${page.screenY}px) scale(${currentCssScale})`,
@@ -294,12 +265,15 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
                   nw = Math.abs(x2 - x1) || 0.05; nh = Math.abs(y2 - y1) || 0.05;
                 }
                 const pw = page.w * renderedZoom, ph = page.h * renderedZoom;
-                const sw = ((m.properties?.strokeWidth || 2) * renderedZoom) / 2;
                 const angle = coords.angle || 0;
 
+                // Markup pixel dimensions (coords already include the shape bounds)
+                const mkW = nw * pw;
+                const mkH = nh * ph;
+
                 // Compute REAL center accounting for Fabric.js left/top adjustment on rotation
-                const halfW = nw * pw / 2;
-                const halfH = nh * ph / 2;
+                const halfW = mkW / 2;
+                const halfH = mkH / 2;
                 const rad = angle * Math.PI / 180;
                 const cosA = Math.cos(rad);
                 const sinA = Math.sin(rad);
@@ -308,11 +282,13 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
 
                 const pulseColor = props.pulseColor || '#00e5ff';
                 const cssScale = viewport.zoom / renderedZoom || 1;
-                const screenPx = props.pulseIntensity === 'high' ? 3 : props.pulseIntensity === 'low' ? 1 : 2;
+                // Uniform expand on all sides (screen-constant pixels)
+                const screenPx = props.pulseIntensity === 'high' ? 4 : props.pulseIntensity === 'low' ? 2 : 3;
                 const expand = screenPx / cssScale;
                 const strokeW = Math.max(1, 1.5 / cssScale);
-                let boxW = nw * pw + sw * 2 + expand * 2;
-                let boxH = nh * ph + sw * 2 + expand * 2;
+                // Box = markup size + uniform expand on each side (no strokeWidth offset)
+                let boxW = mkW + expand * 2;
+                let boxH = mkH + expand * 2;
                 const glowBlur = props.pulseIntensity === 'high' ? 5 : props.pulseIntensity === 'low' ? 2 : 3;
 
                 // ── Determine pulse shape from markup type + stampShape ──

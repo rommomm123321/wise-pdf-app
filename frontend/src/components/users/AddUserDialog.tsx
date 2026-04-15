@@ -20,8 +20,10 @@ import {
   InputLabel,
   CircularProgress,
   InputAdornment,
+  IconButton,
   useMediaQuery,
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import { useTranslation } from 'react-i18next';
@@ -80,6 +82,13 @@ export default function AddUserDialog({ open, onClose }: AddUserDialogProps) {
                     <SearchIcon fontSize="small" />
                   </InputAdornment>
                 ),
+                endAdornment: query ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setQuery('')} edge="end">
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
               },
             }}
           />
