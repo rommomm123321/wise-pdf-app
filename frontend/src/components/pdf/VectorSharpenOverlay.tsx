@@ -93,6 +93,7 @@ function VectorSharpenOverlay({ pdfDoc, viewport, pageLayouts, containerWidth, c
         opacity: 0,
         transition: 'opacity 0.2s ease-in',
         imageRendering: 'crisp-edges',
+        mixBlendMode: 'multiply',  // white background disappears, only dark ink shows
         zIndex: 5,
       }}
     />
