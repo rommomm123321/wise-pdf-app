@@ -230,10 +230,10 @@ export default function MarkupOverlay(props: MarkupOverlayProps) {
                     key={`search-hl-${i}`}
                     sx={{
                       position: 'absolute',
-                      left: res.x * coordScale * renderedZoom,
-                      top: res.y * coordScale * renderedZoom,
-                      width: (res.w || 20) * coordScale * renderedZoom,
-                      height: (res.h || 12) * coordScale * renderedZoom,
+                      left: res.x * coordScale * renderedZoom - 1,
+                      top: res.y * coordScale * renderedZoom - 1,
+                      width: (res.w || 20) * coordScale * renderedZoom + 2,
+                      height: (res.h || 12) * coordScale * renderedZoom + 2,
                       backgroundColor: 'rgba(33, 150, 243, 0.4)',
                       border: '2px solid rgba(33, 150, 243, 0.8)',
                       borderRadius: '3px',

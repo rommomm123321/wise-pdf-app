@@ -815,8 +815,7 @@ GET /compare/:docId1/:docId2/:page1/:page2/:zoom/:x/:y
 - **ADD:** При выходе из compare — toast напоминает о draft маркапах
 
 **Bluebeam Auto-import:**
-- **ADD:** Автоимпорт аннотаций при первом открытии PDF (markups.length === 0)
-- **FIX:** Import badge скрыт если маркапы уже существуют (были импортированы ранее)
+- **DETECT:** `detectAndParseAnnotations()` при первом открытии PDF — обнаруживает встроенные аннотации Bluebeam/Acrobat, сохраняет в `embeddedAnnots` state. Авто-импорт намеренно НЕ реализован — пользователь импортирует вручную.
 - **FIX:** `bluebeamAuthor` приоритетен во всех UI: MarkupTable, MarkupListItem, Properties Panel, CSV export, sort, filter, search
 
 **OneDrive:**
@@ -1178,7 +1177,7 @@ GET /compare/:docId1/:docId2/:page1/:page2/:zoom/:x/:y
   - Final position saved only in `object:modified` (mouseup)
   - Callout parts (connector, bg) still sync visually during drag
 - **FIX:** `_locallyModified` flag on Fabric objects — sync accepts position without recreation
-- **FIX:** `dataHash()` without `w/h` — hash stable across zoom, only changes on real data change
+- **NOTE:** `propHash()` intentionally includes `w/h` (canvas dimensions) — forces object recreation on zoom. Batched via `renderOnAddRemove=false` = zero flicker. `tsCache` fast-path (updatedAt timestamp) skips full hash when markup data hasn't changed.
 - **FIX:** `repositionFromCoords()` — absolute reposition for simple shapes (rect, circle, text, image)
 - **FIX:** Group-based types (stamp, polyline, measure, callout) → forced recreation on dimension change
 - **FIX:** `lastSyncDimsRef` — reposition only when canvas dimensions actually changed
@@ -1333,11 +1332,8 @@ GET /compare/:docId1/:docId2/:page1/:page2/:zoom/:x/:y
 
 ### 🔴 P0 — Блокирует корректную работу функционала
 
-#### P0-1. Поисковые хайлайты отображаются в неправильном месте
-**Файл:** `MarkupOverlay.tsx` (строки 158-161)
-**Причина:** Search results из pdfjs имеют координаты в 1× пространстве (595×842 для A4). В MarkupOverlay они множатся на `renderedZoom` напрямую — но canvas и маркапы работают в 2× пространстве tile server (1190×1684). Хайлайт появляется примерно в 2× меньшем масштабе и смещён.
-**Симптом:** Синий прямоугольник поиска не совпадает с найденным текстом.
-**Решение:** Умножить `res.x, res.y, res.w, res.h` на коэффициент масштаба (`tilePageW / pdfjsPageW`, обычно 2.0) перед применением `renderedZoom`.
+#### ~~P0-1. Поисковые хайлайты — ИСПРАВЛЕНО~~
+**Статус:** ✅ Исправлено. `coordScale = tileW / pdfjsW` применяется в `MarkupOverlay.tsx` строки 224-226. Хайлайты отображаются в правильном месте. Также добавлен ±1px padding для лучшей визуальной видимости.
 
 ---
 
