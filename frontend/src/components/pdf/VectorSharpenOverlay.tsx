@@ -1,7 +1,8 @@
 import { useEffect, useRef, memo } from 'react';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 interface Props {
-  pdfDoc: any;
+  pdfDoc: PDFDocumentProxy | null | undefined;
   viewport: { zoom: number; x: number; y: number };
   pageLayouts: Array<{ index: number; worldX: number; worldY: number; w: number; h: number }>;
   containerWidth: number;
