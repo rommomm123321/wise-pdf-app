@@ -85,7 +85,8 @@
       "Bash(dotnet build:*)",
       "Bash(ssh-keygen:*)",
       "Bash(ssh:*)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Bash(npx eslint:*)"
     ]
   }
 }
